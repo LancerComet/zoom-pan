@@ -146,7 +146,7 @@ class ZoomPan2D {
     const dt = Math.max(1, now - this._lastFrameTs)
     this._lastFrameTs = now
 
-    const { approachKZoom, friction, stopSpeed, background } = this._options
+    const { approachKZoom, friction, stopSpeed } = this._options
 
     // --- A) 计算本帧缩放（log 空间指数趋近） ---
     const zPrev = Math.exp(this._currentLogZ) // 记录上一帧 z
@@ -178,7 +178,7 @@ class ZoomPan2D {
 
     // explicit smooth reset of pan towards (0,0) ONLY when resetting (not based on zoom≈1)
     if (this._isResetting) {
-      const ap = 1 - Math.exp(-this._options.approachKZoom * dt)
+      const ap = 1 - Math.exp(-this._options.approachKPan * dt) // ← 改这个
       this._tx += (0 - this._tx) * ap
       this._ty += (0 - this._ty) * ap
       const doneZ = Math.abs(this._currentLogZ) < 1e-3 && Math.abs(this._targetLogZ) < 1e-6
@@ -197,8 +197,13 @@ class ZoomPan2D {
 
     // --- D) 一帧只写一次矩阵并渲染 ---
     this.context.setTransform(1, 0, 0, 1, 0, 0)
-    if (background && background !== 'transparent') {
-      this.context.fillStyle = background
+
+    // treat null / undefined / '' / 'transparent' as transparent
+    const bg = this._options.background
+    const isOpaqueBg = typeof bg === 'string' && bg.trim() !== '' && bg.toLowerCase() !== 'transparent'
+
+    if (isOpaqueBg) {
+      this.context.fillStyle = bg!
       this.context.fillRect(0, 0, this.canvas.width, this.canvas.height)
     } else {
       this.context.clearRect(0, 0, this.canvas.width, this.canvas.height)
@@ -283,6 +288,8 @@ class ZoomPan2D {
     this._targetLogZ = Math.min(this.LOG_MAX, Math.max(this.LOG_MIN, this._targetLogZ + step))
   }
 
+  private _activePointerId: number | null = null
+
   private _onDown (e: PointerEvent) {
     if (e.button !== 0) {
       return
@@ -291,6 +298,11 @@ class ZoomPan2D {
     this._dragging = true
     this._vx = 0; this._vy = 0
     this._lastMoveTs = performance.now()
+    this._activePointerId = e.pointerId
+    try {
+      this.canvas.setPointerCapture(e.pointerId)
+    } catch {
+    }
   }
 
   private _onMove (e: PointerEvent) {
@@ -327,6 +339,14 @@ class ZoomPan2D {
     const now = performance.now()
     const idle = this._lastMoveTs ? now - this._lastMoveTs : Infinity
 
+    if (this._activePointerId != null) {
+      try {
+        this.canvas.releasePointerCapture(this._activePointerId)
+      } catch {
+      }
+      this._activePointerId = null
+    }
+
     if (idle >= this._options.idleNoInertiaMs) {
       // clear residual velocity to avoid a "kick"
       this._vx = 0; this._vy = 0
@@ -353,7 +373,7 @@ class ZoomPan2D {
   clearDocumentRect () { this._docEnabled = false }
 
   /** 设置屏幕留白（单位：CSS 像素） */
-  setScreenMargins (px: { left?: number; right?: number; top?: number; bottom?: number }) {
+  setDocumentMargins (px: { left?: number; right?: number; top?: number; bottom?: number }) {
     this._marginL = px.left ?? this._marginL
     this._marginR = px.right ?? this._marginR
     this._marginT = px.top ?? this._marginT
@@ -361,7 +381,7 @@ class ZoomPan2D {
   }
 
   /** 让整张文档适配到视口（contain / cover / fitWidth / fitHeight），可带留白 */
-  zoomToFit (mode: 'contain'|'cover'|'fitWidth'|'fitHeight' = 'contain') {
+  zoomDocumentToFit (mode: 'contain'|'cover'|'fitWidth'|'fitHeight' = 'contain') {
     if (!this._docEnabled) {
       return
     }
@@ -384,9 +404,13 @@ class ZoomPan2D {
       z = rh
     }
 
+    const zMin = Math.exp(this.LOG_MIN)
+    const zMax = Math.exp(this.LOG_MAX)
+    z = Math.min(zMax, Math.max(zMin, z))
+
     // 目标缩放（log 空间）
     this._targetLogZ = Math.log(z)
-    this._currentLogZ = Math.log(z) // 可选：直接跳过去；若要动画就只设 target
+    this._currentLogZ = Math.log(z) // 保持你的“立即跳到位”的语义
 
     // 居中放置：保证文档在留白内居中
     // s = z*w + t ；让 doc 左上角映射到 margin 内，且居中
@@ -402,7 +426,7 @@ class ZoomPan2D {
     }
 
     return wx >= this._docX && wx <= this._docX + this._docW &&
-         wy >= this._docY && wy <= this._docY + this._docH
+      wy >= this._docY && wy <= this._docY + this._docH
   }
 
   /** Smoothly reset to zoom=1, pan=(0,0) */
