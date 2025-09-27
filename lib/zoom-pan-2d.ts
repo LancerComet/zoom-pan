@@ -14,9 +14,9 @@
 //   })
 //   // optional: handle Ctrl+0 outside and call zp.resetSmooth()
 
-export type RenderFn = (ctx: CanvasRenderingContext2D, api: ZoomPan2D) => void
+type RenderFn = (ctx: CanvasRenderingContext2D, api: ZoomPan2D) => void
 
-export interface ZoomPanOptions {
+interface ZoomPanOptions {
   minZoom?: number // default 0.5
   maxZoom?: number // default 10
   wheelSensitivity?: number // default 0.0015  (pixel -> log step multiplier)
@@ -30,7 +30,7 @@ export interface ZoomPanOptions {
   background?: string | null // clear color; default '#fff'
 }
 
-export class ZoomPan2D {
+class ZoomPan2D {
   private _canvas: HTMLCanvasElement
   private _context: CanvasRenderingContext2D
   private _render: RenderFn
@@ -320,9 +320,12 @@ export class ZoomPan2D {
   }
 
   constructor (canvas: HTMLCanvasElement, render: RenderFn, options?: ZoomPanOptions) {
-    this._canvas = canvas
     const ctx = canvas.getContext('2d')
-    if (!ctx) throw new Error('2D context not available')
+    if (!ctx) {
+      throw new Error('2D context not available')
+    }
+
+    this._canvas = canvas
     this._context = ctx
     this._render = render
 
@@ -362,4 +365,8 @@ export class ZoomPan2D {
     this._lastFrameTs = performance.now()
     this._raf = requestAnimationFrame(() => this._loop())
   }
+}
+
+export {
+  ZoomPan2D
 }
