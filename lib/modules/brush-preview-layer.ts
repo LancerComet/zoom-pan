@@ -1,5 +1,5 @@
+import type { ZoomPan2D } from '../zoom-pan-2d'
 import { LayerBase } from './layer-kit'
-import type { ZoomPan2D } from './zoom-pan-2d'
 
 class BrushPreviewLayer extends LayerBase {
   // 存屏幕坐标（来自 pointermove）

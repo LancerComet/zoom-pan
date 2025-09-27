@@ -28,6 +28,7 @@ interface ZoomPanOptions {
   idleNoInertiaMs?: number // default 120
   autoResize?: boolean // default true (observes parent size)
   background?: string | null // clear color; default '#fff'
+  drawDocBorder?: boolean // draw 1px border around document
 }
 
 class ZoomPan2D {
@@ -68,7 +69,7 @@ class ZoomPan2D {
   private _lastMoveTs = 0
 
   // Listeners
-  private onWheelBound = (e: PointerEvent) => {
+  private onWheelBound = (e: WheelEvent) => {
     this._onWheel(e)
   }
 
@@ -84,13 +85,67 @@ class ZoomPan2D {
     this._onUp()
   }
 
+  // ---------- Document space ----------
+  // 文档矩形（世界坐标），默认无边界（禁用）
+  private _docEnabled = false
+  private _docX = 0
+  private _docY = 0
+  private _docW = 0
+  private _docH = 0
+
+  // 允许的屏幕留白（CSS 像素）
+  private _marginL = 0
+  private _marginR = 0
+  private _marginT = 0
+  private _marginB = 0
+
   // ---------- Internals ----------
+  private _clampPan (z: number) {
+    if (!this._docEnabled) return
+
+    const W = this._canvas.width / this._dpr
+    const H = this._canvas.height / this._dpr
+    const docL = this._docX
+    const docT = this._docY
+    const docR = this._docX + this._docW
+    const docB = this._docY + this._docH
+
+    // 约束条件：文档的屏幕映射需落在留白内
+    // 左边缘：z*docL + tx <= marginL
+    // 右边缘：z*docR + tx >= W - marginR
+    // 上边缘：z*docT + ty <= marginT
+    // 下边缘：z*docB + ty >= H - marginB
+
+    const txMax = this._marginL - z * docL
+    const txMin = (W - this._marginR) - z * docR
+    const tyMax = this._marginT - z * docT
+    const tyMin = (H - this._marginB) - z * docB
+
+    // 文档比视口小的方向要“居中”
+    // 如果 z*docW <= availW，则锁定 tx 为居中值（不让它左右晃），同理 y。
+    const availW = Math.max(1, W - (this._marginL + this._marginR))
+    const availH = Math.max(1, H - (this._marginT + this._marginB))
+
+    if (z * this._docW <= availW) {
+      this._tx = this._marginL + (availW - z * this._docW) / 2 - z * this._docX
+    } else {
+    // clamp
+      this._tx = Math.min(txMax, Math.max(txMin, this._tx))
+    }
+
+    if (z * this._docH <= availH) {
+      this._ty = this._marginT + (availH - z * this._docH) / 2 - z * this._docY
+    } else {
+      this._ty = Math.min(tyMax, Math.max(tyMin, this._ty))
+    }
+  }
+
   private _loop () {
     const now = performance.now()
     const dt = Math.max(1, now - this._lastFrameTs)
     this._lastFrameTs = now
 
-    const { approachKZoom, approachKPan, friction, stopSpeed, background } = this._options
+    const { approachKZoom, friction, stopSpeed, background } = this._options
 
     // --- A) 计算本帧缩放（log 空间指数趋近） ---
     const zPrev = Math.exp(this._currentLogZ) // 记录上一帧 z
@@ -120,16 +175,62 @@ class ZoomPan2D {
       }
     }
 
+    // explicit smooth reset of pan towards (0,0) ONLY when resetting (not based on zoom≈1)
+    if (this._isResetting) {
+      const ap = 1 - Math.exp(-this._options.approachKZoom * dt)
+      this._tx += (0 - this._tx) * ap
+      this._ty += (0 - this._ty) * ap
+      const doneZ = Math.abs(this._currentLogZ) < 1e-3 && Math.abs(this._targetLogZ) < 1e-6
+      const doneP = Math.abs(this._tx) < 0.5 && Math.abs(this._ty) < 0.5
+      if (doneZ && doneP) {
+        this._currentLogZ = 0
+        this._targetLogZ = 0
+        this._tx = 0
+        this._ty = 0
+        this._isResetting = false
+      }
+    }
+
+    // document pan clamp (after zoom/pan changes)
+    this._clampPan(zNow)
+
     // --- D) 一帧只写一次矩阵并渲染 ---
     this._context.setTransform(1, 0, 0, 1, 0, 0)
-    if (background) {
+    if (background && background !== 'transparent') {
       this._context.fillStyle = background
       this._context.fillRect(0, 0, this._canvas.width, this._canvas.height)
     } else {
       this._context.clearRect(0, 0, this._canvas.width, this._canvas.height)
     }
+
     this._context.setTransform(this._dpr * zNow, 0, 0, this._dpr * zNow, this._dpr * this._tx, this._dpr * this._ty)
-    this._render(this._context, this)
+
+    if (this._docEnabled) {
+      // optional background around doc could be drawn here if you like
+      // world clipping to document
+      this._context.save()
+      this._context.beginPath()
+      this._context.rect(this._docX, this._docY, this._docW, this._docH)
+      this._context.clip()
+
+      // user world rendering
+      this._render(this._context, this)
+
+      this._context.restore()
+
+      // 1px screen border around the document
+      if (this._options.drawDocBorder) {
+        const { zoom } = this.getTransform()
+        this._context.save()
+        this._context.lineWidth = 1 / zoom
+        this._context.strokeStyle = '#cfcfcf'
+        this._context.strokeRect(this._docX, this._docY, this._docW, this._docH)
+        this._context.restore()
+      }
+    } else {
+      // no document rect: render directly
+      this._render(this._context, this)
+    }
 
     this._raf = requestAnimationFrame(() => this._loop())
   }
@@ -172,8 +273,11 @@ class ZoomPan2D {
     this._anchorY = e.clientY - rect.top
 
     let step = -dy * this._options.wheelSensitivity
-    if (e.ctrlKey || e.metaKey) step *= 1.6
-    else if (e.shiftKey) step *= 0.6
+    if (e.ctrlKey || e.metaKey) {
+      step *= 1.6
+    } else if (e.shiftKey) {
+      step *= 0.6
+    }
 
     this._targetLogZ = Math.min(this.LOG_MAX, Math.max(this.LOG_MIN, this._targetLogZ + step))
   }
@@ -238,6 +342,67 @@ class ZoomPan2D {
   }
 
   // ---------- Public API ----------
+  /** 定义文档矩形（世界坐标） */
+  setDocumentRect (x: number, y: number, w: number, h: number) {
+    this._docEnabled = true
+    this._docX = x; this._docY = y; this._docW = w; this._docH = h
+  }
+
+  /** 清空文档边界（不限制） */
+  clearDocumentRect () { this._docEnabled = false }
+
+  /** 设置屏幕留白（单位：CSS 像素） */
+  setScreenMargins (px: { left?: number; right?: number; top?: number; bottom?: number }) {
+    this._marginL = px.left ?? this._marginL
+    this._marginR = px.right ?? this._marginR
+    this._marginT = px.top ?? this._marginT
+    this._marginB = px.bottom ?? this._marginB
+  }
+
+  /** 让整张文档适配到视口（contain / cover / fitWidth / fitHeight），可带留白 */
+  zoomToFit (mode: 'contain'|'cover'|'fitWidth'|'fitHeight' = 'contain') {
+    if (!this._docEnabled) {
+      return
+    }
+
+    const W = this._canvas.width / this._dpr
+    const H = this._canvas.height / this._dpr
+    const availW = Math.max(1, W - (this._marginL + this._marginR))
+    const availH = Math.max(1, H - (this._marginT + this._marginB))
+
+    let z: number
+    const rw = availW / this._docW
+    const rh = availH / this._docH
+    if (mode === 'contain') {
+      z = Math.min(rw, rh)
+    } else if (mode === 'cover') {
+      z = Math.max(rw, rh)
+    } else if (mode === 'fitWidth') {
+      z = rw
+    } else {
+      z = rh
+    }
+
+    // 目标缩放（log 空间）
+    this._targetLogZ = Math.log(z)
+    this._currentLogZ = Math.log(z) // 可选：直接跳过去；若要动画就只设 target
+
+    // 居中放置：保证文档在留白内居中
+    // s = z*w + t ；让 doc 左上角映射到 margin 内，且居中
+    const sx = this._marginL + (availW - z * this._docW) / 2
+    const sy = this._marginT + (availH - z * this._docH) / 2
+    this._tx = sx - z * this._docX
+    this._ty = sy - z * this._docY
+  }
+
+  isPointInDocument (wx: number, wy: number) {
+    if (!this._docEnabled) {
+      return true
+    }
+
+    return wx >= this._docX && wx <= this._docX + this._docW &&
+         wy >= this._docY && wy <= this._docY + this._docH
+  }
 
   /** Smoothly reset to zoom=1, pan=(0,0) */
   resetSmooth () {
@@ -311,9 +476,9 @@ class ZoomPan2D {
   destroy () {
     cancelAnimationFrame(this._raf)
     this._canvas.removeEventListener('wheel', this.onWheelBound)
-    this._canvas.removeEventListener('mousedown', this.onDownBound)
-    window.removeEventListener('mousemove', this.onMoveBound)
-    window.removeEventListener('mouseup', this.onUpBound)
+    this._canvas.removeEventListener('pointerdown', this.onDownBound)
+    window.removeEventListener('pointermove', this.onMoveBound)
+    window.removeEventListener('pointerup', this.onUpBound)
     if (this._resizeObserver) {
       this._resizeObserver.disconnect()
     }
@@ -342,6 +507,7 @@ class ZoomPan2D {
       idleNoInertiaMs: 120,
       autoResize: true,
       background: '#fff',
+      drawDocBorder: false,
       ...options
     }
 
@@ -369,4 +535,8 @@ class ZoomPan2D {
 
 export {
   ZoomPan2D
+}
+
+export type {
+  ZoomPanOptions
 }

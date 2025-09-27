@@ -2,7 +2,7 @@
 // Layer system for ZoomPan2D: world-space layers + screen-space overlay layers.
 // Features: image layers, offscreen-canvas layers, z-order, visibility, opacity, blend, hitTest.
 
-import type { ZoomPan2D } from './zoom-pan-2d'
+import type { ZoomPan2D } from '../zoom-pan-2d'
 
 export type LayerId = string
 export type BlendMode = GlobalCompositeOperation
