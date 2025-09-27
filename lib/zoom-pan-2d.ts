@@ -7,14 +7,14 @@
 // - High-DPI (devicePixelRatio) support
 //
 // Usage:
-//   const zp = new ZoomPan2D(canvas, (ctx, api) => {
-//     // draw in WORLD coordinates (api already sets ctx transform)
+//   const zp = new ZoomPan2D(canvas, (ctx, view) => {
+//     // draw in WORLD coordinates (view already sets ctx transform)
 //     ctx.fillStyle = '#08f'
 //     ctx.fillRect(0, 0, 200, 120)
 //   })
 //   // optional: handle Ctrl+0 outside and call zp.resetSmooth()
 
-type RenderFn = (ctx: CanvasRenderingContext2D, api: ZoomPan2D) => void
+type RenderFn = (view: ZoomPan2D) => void
 
 interface ZoomPanOptions {
   minZoom?: number // default 0.5
@@ -32,10 +32,11 @@ interface ZoomPanOptions {
 }
 
 class ZoomPan2D {
-  private _canvas: HTMLCanvasElement
-  private _context: CanvasRenderingContext2D
-  private _render: RenderFn
-  private _options: Required<ZoomPanOptions>
+  readonly canvas: HTMLCanvasElement
+  readonly context: CanvasRenderingContext2D
+
+  private readonly _render: RenderFn
+  private readonly _options: Required<ZoomPanOptions>
 
   private _dpr = Math.max(1, window.devicePixelRatio || 1)
 
@@ -103,8 +104,8 @@ class ZoomPan2D {
   private _clampPan (z: number) {
     if (!this._docEnabled) return
 
-    const W = this._canvas.width / this._dpr
-    const H = this._canvas.height / this._dpr
+    const W = this.canvas.width / this._dpr
+    const H = this.canvas.height / this._dpr
     const docL = this._docX
     const docT = this._docY
     const docR = this._docX + this._docW
@@ -195,55 +196,55 @@ class ZoomPan2D {
     this._clampPan(zNow)
 
     // --- D) 一帧只写一次矩阵并渲染 ---
-    this._context.setTransform(1, 0, 0, 1, 0, 0)
+    this.context.setTransform(1, 0, 0, 1, 0, 0)
     if (background && background !== 'transparent') {
-      this._context.fillStyle = background
-      this._context.fillRect(0, 0, this._canvas.width, this._canvas.height)
+      this.context.fillStyle = background
+      this.context.fillRect(0, 0, this.canvas.width, this.canvas.height)
     } else {
-      this._context.clearRect(0, 0, this._canvas.width, this._canvas.height)
+      this.context.clearRect(0, 0, this.canvas.width, this.canvas.height)
     }
 
-    this._context.setTransform(this._dpr * zNow, 0, 0, this._dpr * zNow, this._dpr * this._tx, this._dpr * this._ty)
+    this.context.setTransform(this._dpr * zNow, 0, 0, this._dpr * zNow, this._dpr * this._tx, this._dpr * this._ty)
 
     if (this._docEnabled) {
       // optional background around doc could be drawn here if you like
       // world clipping to document
-      this._context.save()
-      this._context.beginPath()
-      this._context.rect(this._docX, this._docY, this._docW, this._docH)
-      this._context.clip()
+      this.context.save()
+      this.context.beginPath()
+      this.context.rect(this._docX, this._docY, this._docW, this._docH)
+      this.context.clip()
 
       // user world rendering
-      this._render(this._context, this)
+      this._render(this)
 
-      this._context.restore()
+      this.context.restore()
 
       // 1px screen border around the document
       if (this._options.drawDocBorder) {
         const { zoom } = this.getTransform()
-        this._context.save()
-        this._context.lineWidth = 1 / zoom
-        this._context.strokeStyle = '#cfcfcf'
-        this._context.strokeRect(this._docX, this._docY, this._docW, this._docH)
-        this._context.restore()
+        this.context.save()
+        this.context.lineWidth = 1 / zoom
+        this.context.strokeStyle = '#cfcfcf'
+        this.context.strokeRect(this._docX, this._docY, this._docW, this._docH)
+        this.context.restore()
       }
     } else {
       // no document rect: render directly
-      this._render(this._context, this)
+      this._render(this)
     }
 
     this._raf = requestAnimationFrame(() => this._loop())
   }
 
   private _getLineHeightPx () {
-    const lh = getComputedStyle(this._canvas).lineHeight
+    const lh = getComputedStyle(this.canvas).lineHeight
     if (!lh || lh === 'normal') return 16 // 兜底
     const n = parseFloat(lh)
     return Number.isFinite(n) ? n : 16
   }
 
   private _normalizeWheelDelta (e: WheelEvent) {
-    const canvas = this._canvas
+    const canvas = this.canvas
     let dy = e.deltaY
 
     // normalize delta
@@ -268,7 +269,7 @@ class ZoomPan2D {
 
     const dy = this._normalizeWheelDelta(e)
 
-    const rect = this._canvas.getBoundingClientRect()
+    const rect = this.canvas.getBoundingClientRect()
     this._anchorX = e.clientX - rect.left
     this._anchorY = e.clientY - rect.top
 
@@ -365,8 +366,8 @@ class ZoomPan2D {
       return
     }
 
-    const W = this._canvas.width / this._dpr
-    const H = this._canvas.height / this._dpr
+    const W = this.canvas.width / this._dpr
+    const H = this.canvas.height / this._dpr
     const availW = Math.max(1, W - (this._marginL + this._marginR))
     const availH = Math.max(1, H - (this._marginT + this._marginB))
 
@@ -459,24 +460,24 @@ class ZoomPan2D {
 
   /** Resize canvas to match parent size and DPR */
   resizeToParent () {
-    const parent = this._canvas.parentElement || this._canvas
+    const parent = this.canvas.parentElement || this.canvas
     const rect = parent.getBoundingClientRect()
     this._dpr = Math.max(1, window.devicePixelRatio || 1)
 
     const w = Math.max(1, Math.round(rect.width))
     const h = Math.max(1, Math.round(rect.height))
 
-    this._canvas.width = Math.round(w * this._dpr)
-    this._canvas.height = Math.round(h * this._dpr)
-    this._canvas.style.width = `${w}px`
-    this._canvas.style.height = `${h}px`
+    this.canvas.width = Math.round(w * this._dpr)
+    this.canvas.height = Math.round(h * this._dpr)
+    this.canvas.style.width = `${w}px`
+    this.canvas.style.height = `${h}px`
   }
 
   /** Destroy and cleanup */
   destroy () {
     cancelAnimationFrame(this._raf)
-    this._canvas.removeEventListener('wheel', this.onWheelBound)
-    this._canvas.removeEventListener('pointerdown', this.onDownBound)
+    this.canvas.removeEventListener('wheel', this.onWheelBound)
+    this.canvas.removeEventListener('pointerdown', this.onDownBound)
     window.removeEventListener('pointermove', this.onMoveBound)
     window.removeEventListener('pointerup', this.onUpBound)
     if (this._resizeObserver) {
@@ -484,14 +485,18 @@ class ZoomPan2D {
     }
   }
 
-  constructor (canvas: HTMLCanvasElement, render: RenderFn, options?: ZoomPanOptions) {
-    const ctx = canvas.getContext('2d')
-    if (!ctx) {
+  constructor (
+    canvas: HTMLCanvasElement,
+    render: RenderFn,
+    options?: ZoomPanOptions
+  ) {
+    const context = canvas.getContext('2d')
+    if (!context) {
       throw new Error('2D context not available')
     }
 
-    this._canvas = canvas
-    this._context = ctx
+    this.canvas = canvas
+    this.context = context
     this._render = render
 
     // defaults
@@ -515,15 +520,15 @@ class ZoomPan2D {
     this.LOG_MAX = Math.log(this._options.maxZoom)
 
     // events
-    this._canvas.addEventListener('wheel', this.onWheelBound, { passive: false })
-    this._canvas.addEventListener('pointerdown', this.onDownBound)
+    this.canvas.addEventListener('wheel', this.onWheelBound, { passive: false })
+    this.canvas.addEventListener('pointerdown', this.onDownBound)
     window.addEventListener('pointermove', this.onMoveBound)
     window.addEventListener('pointerup', this.onUpBound)
 
     // resize
     if (this._options.autoResize) {
       this._resizeObserver = new ResizeObserver(() => this.resizeToParent())
-      this._resizeObserver.observe(this._canvas.parentElement || this._canvas)
+      this._resizeObserver.observe(this.canvas.parentElement || this.canvas)
     }
     this.resizeToParent()
 

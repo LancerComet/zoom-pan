@@ -1,19 +1,32 @@
-import { ZoomPan2D, BrushPreviewLayer, LayerManager } from './lib'
+/*
+ * In this exmaple, we gonna show how to create a simple painter.
+ */
+
+import { ZoomPan2D, BrushCursor, LayerManager } from './lib'
+
+// We assume the painting document is 2480x3507 (A4 paper).
+const DOCUMENT_WIDTH = 2480
+const DOCUMENT_HEIGHT = 3507
 
 const canvas = document.querySelector('canvas')!
-const layers = new LayerManager()
+const layerManager = new LayerManager()
 
-const documentWidth = 500
-const documentHeight = 500
+// View initialization.
+// =================
+const view = new ZoomPan2D(
+  canvas,
+  view => {
+    layerManager.renderAllLayersIn(view)
+  },
+  {
+    minZoom: 0.2,
+    background: null,
+    drawDocBorder: true
+  }
+)
 
-const view = new ZoomPan2D(canvas, (ctx, zoomPan) => {
-  layers.renderWith(zoomPan, ctx) // 这里 ZoomPan2D 已经 setTransform 为世界坐标
-}, {
-  background: null,
-  drawDocBorder: true
-})
-
-view.setDocumentRect(0, 0, documentWidth, documentHeight)
+// Set initial document size and screen margins.
+view.setDocumentRect(0, 0, DOCUMENT_WIDTH, DOCUMENT_HEIGHT)
 view.setScreenMargins({
   left: 50,
   right: 50,
@@ -21,12 +34,16 @@ view.setScreenMargins({
   bottom: 50
 })
 
-view.zoomToFit('contain') // 让整张文档自适应显示（contain）
+// Fit the whole document to view.
+view.zoomToFit('contain')
 
-// 文档区域背景图层.
-await layers.createCanvasLayer({
-  width: 1000,
-  height: 2000,
+// Create layers.
+// =================
+// The layer that is used as the background of the document.
+await layerManager.createCanvasLayer({
+  name: 'Background',
+  width: DOCUMENT_WIDTH,
+  height: DOCUMENT_HEIGHT,
   space: 'world',
   x: 0,
   y: 0,
@@ -38,8 +55,8 @@ await layers.createCanvasLayer({
   }
 })
 
-// 1) 加一张图片图层
-await layers.createImageLayer({
+// Insert an image layer.
+await layerManager.createImageLayer({
   src: '/image.png',
   x: 50,
   y: 50,
@@ -47,31 +64,35 @@ await layers.createImageLayer({
   anchor: 'topLeft'
 })
 
-// 2) 加一个屏幕坐标的“自定义指针/叠加 UI”图层（Offscreen Canvas）
-const cursorLayer = layers.createCanvasLayer({
+// A cursor layer that always follows the mouse position.
+// It is drawn in screen space, so it size is fixed and not affected by zoom.
+const cursorLayer = layerManager.createCanvasLayer({
   width: 32,
   height: 32,
   space: 'screen',
   x: 0,
   y: 0,
   anchor: 'center',
-  redraw (ctx, off) {
-    // 画一个十字+方框。注意：这是屏幕像素坐标，和世界无关。
-    ctx.clearRect(0, 0, off.width, off.height)
-    ctx.strokeStyle = '#00d8ff'
-    ctx.lineWidth = 2
-    ctx.strokeRect(8, 8, off.width - 16, off.height - 16)
-    ctx.beginPath()
-    ctx.moveTo(off.width / 2, 6); ctx.lineTo(off.width / 2, off.height - 6)
-    ctx.moveTo(6, off.height / 2); ctx.lineTo(off.width - 6, off.height / 2)
-    ctx.stroke()
+  redraw (context, canvas) {
+    context.clearRect(0, 0, canvas.width, canvas.height)
+
+    // Let's make a crosshair cursor.
+    context.strokeStyle = '#00d8ff'
+    context.lineWidth = 2
+    context.beginPath()
+    context.moveTo(0, 16)
+    context.lineTo(32, 16)
+    context.moveTo(16, 0)
+    context.lineTo(16, 32)
+    context.stroke()
   }
 })
 
-// 世界层：笔刷覆盖预览（真正的“落笔”半径）
-const brushLayer = new BrushPreviewLayer()
-brushLayer.radiusWorld = 12 // 世界半径（比如 12 个世界单位）
-layers.add(brushLayer)
+// A brush cursor layer that shows the brush size in world space.
+// It is drawn in world space, so its size is affected by zoom.
+const brushCursor = new BrushCursor()
+brushCursor.radiusWorld = 12 // Brush radius in world unit.
+layerManager.addLayer(brushCursor)
 
 canvas.addEventListener('pointermove', event => {
   const rect = canvas.getBoundingClientRect()
@@ -82,13 +103,14 @@ canvas.addEventListener('pointermove', event => {
   cursorLayer.y = cy
   cursorLayer.requestRedraw()
 
-  // 只需要给 brushLayer 填“屏幕坐标”，它会在 render 里自己转世界坐标
-  brushLayer.screenX = cx
-  brushLayer.screenY = cy
+  // Assign screen position to the brush cursor.
+  // It will be converted to world position in the BrushCursor.render() method.
+  brushCursor.screenX = cx
+  brushCursor.screenY = cy
 })
 
-// 可选：绑定 Ctrl/⌘ + 0 平滑复位
-window.addEventListener('keydown', event => {
+// Press Ctrl + 0 to reset the view.
+window.addEventListener('keyup', event => {
   if ((event.ctrlKey || event.metaKey) && (event.key === '0' || event.code === 'Digit0')) {
     event.preventDefault()
     view.resetSmooth()
