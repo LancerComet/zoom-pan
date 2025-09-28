@@ -45,6 +45,9 @@
     border-left: 1px solid rgba(0, 0, 0, .1)
 
     .side-bar-header
+      display: flex
+      align-items: center
+      justify-content: space-between
       padding: 10px 20px
 
   .layer-list
@@ -57,6 +60,9 @@
 
     .layer-list-item
       display: flex
+      align-items: center
+      gap: 10px
+      padding: 0 10px
       border: 1px solid rgba(0, 0, 0, .1)
       user-select: none
       cursor: pointer
@@ -75,10 +81,15 @@
       .preview-img
         width: 60px
         height: 60px
-        background-color: red
+        text-align: center
 
-      .layer-info
-        margin-left: 10px
+        canvas
+          max-width: 100%
+          max-height: 100%
+          background-image: url("./assets/transparent-layer.png")
+          background-repeat: repeat
+          background-size: 10%
+          border: 1px solid rgba(0, 0, 0, .1)
 
   .brush-size-slider
     display: flex

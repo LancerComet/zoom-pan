@@ -52,21 +52,20 @@ class ZoomPan2D {
   private _vy = 0
   private _lastMoveTs = 0
 
-  // Listeners
-  private onWheelBound = (e: WheelEvent) => {
+  private _onWheelBound = (e: WheelEvent) => {
     this._onWheel(e)
   }
 
-  private onDownBound = (e: PointerEvent) => {
-    this._onDown(e)
+  private _onDownBound = (e: PointerEvent) => {
+    this._onPointerDown(e)
   }
 
-  private onMoveBound = (e: PointerEvent) => {
-    this._onMove(e)
+  private _onMoveBound = (e: PointerEvent) => {
+    this._onPointerMove(e)
   }
 
-  private onUpBound = () => {
-    this._onUp()
+  private _onUpBound = () => {
+    this._onPointerUp()
   }
 
   // ---- Interaction toggles ----
@@ -88,47 +87,7 @@ class ZoomPan2D {
   private _marginB = 0
 
   // ---------- Internals ----------
-  private _clampPan (z: number) {
-    if (!this._docEnabled) {
-      return
-    }
-
-    const W = this.canvas.width / this._dpr
-    const H = this.canvas.height / this._dpr
-    const docL = this._docX
-    const docT = this._docY
-    const docR = this._docX + this._docW
-    const docB = this._docY + this._docH
-
-    // 约束条件：文档的屏幕映射需落在留白内
-    // 左边缘：z*docL + tx <= marginL
-    // 右边缘：z*docR + tx >= W - marginR
-    // 上边缘：z*docT + ty <= marginT
-    // 下边缘：z*docB + ty >= H - marginB
-
-    const txMax = this._marginL - z * docL
-    const txMin = (W - this._marginR) - z * docR
-    const tyMax = this._marginT - z * docT
-    const tyMin = (H - this._marginB) - z * docB
-
-    // 文档比视口小的方向要“居中”
-    // 如果 z*docW <= availW，则锁定 tx 为居中值（不让它左右晃），同理 y。
-    const availW = Math.max(1, W - (this._marginL + this._marginR))
-    const availH = Math.max(1, H - (this._marginT + this._marginB))
-
-    if (z * this._docW <= availW) {
-      this._tx = this._marginL + (availW - z * this._docW) / 2 - z * this._docX
-    } else {
-    // clamp
-      this._tx = Math.min(txMax, Math.max(txMin, this._tx))
-    }
-
-    if (z * this._docH <= availH) {
-      this._ty = this._marginT + (availH - z * this._docH) / 2 - z * this._docY
-    } else {
-      this._ty = Math.min(tyMax, Math.max(tyMin, this._ty))
-    }
-  }
+  private _activePointerId: number | null = null
 
   private _loop () {
     const now = performance.now()
@@ -242,6 +201,79 @@ class ZoomPan2D {
     return Number.isFinite(n) ? n : 16
   }
 
+  private _onPointerDown (e: PointerEvent) {
+    if (e.button !== 0 || !this._panEnabled) {
+      return
+    }
+
+    this._dragging = true
+    this._vx = 0; this._vy = 0
+    this._lastMoveTs = performance.now()
+    this._activePointerId = e.pointerId
+    try {
+      this.canvas.setPointerCapture(e.pointerId)
+    } catch {
+    }
+  }
+
+  private _onPointerMove (e: PointerEvent) {
+    if (!this._dragging || !this._panEnabled) {
+      return
+    }
+
+    const now = performance.now()
+    const dt = Math.max(1, now - (this._lastMoveTs || now - 16))
+    this._lastMoveTs = now
+
+    const dx = e.movementX
+    const dy = e.movementY
+
+    // apply pan immediately (CSS px)
+    this._tx += dx
+    this._ty += dy
+
+    // velocity EMA (px/ms)
+    const a = this._options.emaAlpha
+    const instVx = dx / dt
+    const instVy = dy / dt
+    this._vx = (1 - a) * this._vx + a * instVx
+    this._vy = (1 - a) * this._vy + a * instVy
+  }
+
+  private _onPointerUp () {
+    if (!this._dragging) {
+      return
+    }
+
+    this._dragging = false
+
+    const now = performance.now()
+    const idle = this._lastMoveTs ? now - this._lastMoveTs : Infinity
+
+    if (this._activePointerId != null) {
+      try {
+        this.canvas.releasePointerCapture(this._activePointerId)
+      } catch {
+      }
+      this._activePointerId = null
+    }
+
+    if (idle >= this._options.idleNoInertiaMs) {
+      // clear residual velocity to avoid a "kick"
+      this._vx = 0; this._vy = 0
+    } else {
+      // decay once by idle time (convert friction-per-16ms to friction-per-idle)
+      const per = Math.pow(this._options.friction, idle / 16)
+      this._vx *= per
+      this._vy *= per
+    }
+
+    if (Math.hypot(this._vx, this._vy) < this._options.stopSpeed) {
+      this._vx = 0; this._vy = 0
+    }
+  }
+
+  // --------- Wheel ----------
   private _normalizeWheelDelta (e: WheelEvent) {
     const canvas = this.canvas
     let dy = e.deltaY
@@ -286,81 +318,85 @@ class ZoomPan2D {
     this._targetLogZ = Math.min(this.LOG_MAX, Math.max(this.LOG_MIN, this._targetLogZ + step))
   }
 
-  private _activePointerId: number | null = null
+  // --------- Color ----------
+  getPixelColorAtScreen (sx: number, sy: number) {
+    // 映射到画布内部像素坐标（注意 DPR）
+    const x = Math.floor(sx * this._dpr)
+    const y = Math.floor(sy * this._dpr)
 
-  private _onDown (e: PointerEvent) {
-    if (e.button !== 0 || !this._panEnabled) {
-      return
+    // 边界保护
+    if (x < 0 || y < 0 || x >= this.canvas.width || y >= this.canvas.height) {
+      return { r: 0, g: 0, b: 0, a: 0, rgba: 'rgba(0,0,0,0)', hex: '#000000' }
     }
 
-    this._dragging = true
-    this._vx = 0; this._vy = 0
-    this._lastMoveTs = performance.now()
-    this._activePointerId = e.pointerId
-    try {
-      this.canvas.setPointerCapture(e.pointerId)
-    } catch {
+    // getImageData 不受当前 transform 影响，直接是像素空间
+    const data = this.context.getImageData(x, y, 1, 1).data
+    const r = data[0]
+    const g = data[1]
+    const b = data[2]
+    const a = data[3] / 255
+
+    const to2 = (n: number) => n.toString(16).padStart(2, '0')
+    const hex = `#${to2(r)}${to2(g)}${to2(b)}`
+
+    return {
+      r,
+      g,
+      b,
+      a,
+      rgba: `rgba(${r},${g},${b},${a.toFixed(3)})`,
+      hex
     }
   }
 
-  private _onMove (e: PointerEvent) {
-    if (!this._dragging || !this._panEnabled) {
-      return
-    }
-
-    const now = performance.now()
-    const dt = Math.max(1, now - (this._lastMoveTs || now - 16))
-    this._lastMoveTs = now
-
-    const dx = e.movementX
-    const dy = e.movementY
-
-    // apply pan immediately (CSS px)
-    this._tx += dx
-    this._ty += dy
-
-    // velocity EMA (px/ms)
-    const a = this._options.emaAlpha
-    const instVx = dx / dt
-    const instVy = dy / dt
-    this._vx = (1 - a) * this._vx + a * instVx
-    this._vy = (1 - a) * this._vy + a * instVy
+  getPixelColorAtWorld (wx: number, wy: number) {
+    const { x: sx, y: sy } = this.toScreen(wx, wy)
+    return this.getPixelColorAtScreen(sx, sy)
   }
 
-  private _onUp () {
-    if (!this._dragging) {
+  // ---------- Pan & Zoom ----------
+  private _clampPan (z: number) {
+    if (!this._docEnabled) {
       return
     }
 
-    this._dragging = false
+    const W = this.canvas.width / this._dpr
+    const H = this.canvas.height / this._dpr
+    const docL = this._docX
+    const docT = this._docY
+    const docR = this._docX + this._docW
+    const docB = this._docY + this._docH
 
-    const now = performance.now()
-    const idle = this._lastMoveTs ? now - this._lastMoveTs : Infinity
+    // 约束条件：文档的屏幕映射需落在留白内
+    // 左边缘：z*docL + tx <= marginL
+    // 右边缘：z*docR + tx >= W - marginR
+    // 上边缘：z*docT + ty <= marginT
+    // 下边缘：z*docB + ty >= H - marginB
 
-    if (this._activePointerId != null) {
-      try {
-        this.canvas.releasePointerCapture(this._activePointerId)
-      } catch {
-      }
-      this._activePointerId = null
-    }
+    const txMax = this._marginL - z * docL
+    const txMin = (W - this._marginR) - z * docR
+    const tyMax = this._marginT - z * docT
+    const tyMin = (H - this._marginB) - z * docB
 
-    if (idle >= this._options.idleNoInertiaMs) {
-      // clear residual velocity to avoid a "kick"
-      this._vx = 0; this._vy = 0
+    // 文档比视口小的方向要“居中”
+    // 如果 z*docW <= availW，则锁定 tx 为居中值（不让它左右晃），同理 y。
+    const availW = Math.max(1, W - (this._marginL + this._marginR))
+    const availH = Math.max(1, H - (this._marginT + this._marginB))
+
+    if (z * this._docW <= availW) {
+      this._tx = this._marginL + (availW - z * this._docW) / 2 - z * this._docX
     } else {
-      // decay once by idle time (convert friction-per-16ms to friction-per-idle)
-      const per = Math.pow(this._options.friction, idle / 16)
-      this._vx *= per
-      this._vy *= per
+      // clamp
+      this._tx = Math.min(txMax, Math.max(txMin, this._tx))
     }
 
-    if (Math.hypot(this._vx, this._vy) < this._options.stopSpeed) {
-      this._vx = 0; this._vy = 0
+    if (z * this._docH <= availH) {
+      this._ty = this._marginT + (availH - z * this._docH) / 2 - z * this._docY
+    } else {
+      this._ty = Math.min(tyMax, Math.max(tyMin, this._ty))
     }
   }
 
-  // ---------- Public API ----------
   isPanEnabled () {
     return this._panEnabled
   }
@@ -388,6 +424,7 @@ class ZoomPan2D {
     this._zoomEnabled = enabled
   }
 
+  // ---------- Public API ----------
   setDocumentRect (x: number, y: number, w: number, h: number) {
     this._docEnabled = true
     this._docX = x
@@ -536,10 +573,10 @@ class ZoomPan2D {
   /** Destroy and cleanup */
   destroy () {
     cancelAnimationFrame(this._raf)
-    this.canvas.removeEventListener('wheel', this.onWheelBound)
-    this.canvas.removeEventListener('pointerdown', this.onDownBound)
-    window.removeEventListener('pointermove', this.onMoveBound)
-    window.removeEventListener('pointerup', this.onUpBound)
+    this.canvas.removeEventListener('wheel', this._onWheelBound)
+    this.canvas.removeEventListener('pointerdown', this._onDownBound)
+    window.removeEventListener('pointermove', this._onMoveBound)
+    window.removeEventListener('pointerup', this._onUpBound)
     if (this._resizeObserver) {
       this._resizeObserver.disconnect()
     }
@@ -550,7 +587,10 @@ class ZoomPan2D {
     render: RenderFn,
     options?: ZoomPanOptions
   ) {
-    const context = canvas.getContext('2d')
+    const context = canvas.getContext('2d', {
+      willReadFrequently: true,
+      alpha: true
+    })
     if (!context) {
       throw new Error('2D context not available')
     }
@@ -580,10 +620,10 @@ class ZoomPan2D {
     this.LOG_MAX = Math.log(this._options.maxZoom)
 
     // events
-    this.canvas.addEventListener('wheel', this.onWheelBound, { passive: false })
-    this.canvas.addEventListener('pointerdown', this.onDownBound)
-    window.addEventListener('pointermove', this.onMoveBound)
-    window.addEventListener('pointerup', this.onUpBound)
+    this.canvas.addEventListener('wheel', this._onWheelBound, { passive: false })
+    this.canvas.addEventListener('pointerdown', this._onDownBound)
+    window.addEventListener('pointermove', this._onMoveBound)
+    window.addEventListener('pointerup', this._onUpBound)
 
     // resize
     if (this._options.autoResize) {

@@ -2,6 +2,8 @@ import { loadImage } from '../utils'
 import type { ZoomPan2D } from '../zoom-pan-2d'
 
 type BlendMode = GlobalCompositeOperation
+type AnchorType = 'topLeft' | 'center'
+type SpaceType = 'world' | 'screen'
 
 /* ---------------------------------------
  * Base layer
@@ -12,17 +14,16 @@ abstract class LayerBase {
   readonly id: string
   type: string
   name: string
-  space: 'world' | 'screen' = 'world'
+  space: SpaceType = 'world'
   visible: boolean = true
   opacity: number = 1
   blend: BlendMode = 'source-over'
-  zIndex: number = 0
 
   abstract render (view: ZoomPan2D): void
   abstract destroy (): void
   abstract hitTest (x: number, y: number, view?: ZoomPan2D): boolean
 
-  protected constructor (name: string, type: string, space: 'world' | 'screen' = 'world') {
+  protected constructor (name: string, type: string, space: SpaceType = 'world') {
     this.name = name
     this.id = `layer_${type}_${++__LAYER_SEQ}`
     this.type = type
@@ -43,12 +44,12 @@ interface ICreateCanvasLayerOption {
    *
    * @default 'world'
    */
-  space?: 'world' | 'screen'
+  space?: SpaceType
   x?: number
   y?: number
   scale?: number
   rotation?: number
-  anchor?: 'topLeft' | 'center'
+  anchor?: AnchorType
   redraw?: (context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => void
 }
 
@@ -61,12 +62,11 @@ class CanvasLayer extends LayerBase {
 
   readonly canvas: HTMLCanvasElement
   readonly context: CanvasRenderingContext2D
-
   x: number = 0
   y: number = 0
   scale: number = 1
   rotation: number = 0
-  anchor: 'topLeft' | 'center' = 'topLeft'
+  anchor: AnchorType = 'topLeft'
 
   // Drawing.
   // =================
@@ -83,7 +83,8 @@ class CanvasLayer extends LayerBase {
 
   stroke (
     wx: number, wy: number,
-    color: string, size: number, pressure: number = 1,
+    color: string, size: number,
+    pressure: number = 1,
     mode: 'brush' | 'eraser' = 'brush'
   ) {
     if (!this._drawing) {
@@ -98,7 +99,7 @@ class CanvasLayer extends LayerBase {
 
     if (mode === 'eraser') {
       this.context.globalCompositeOperation = 'destination-out'
-      this.context.strokeStyle = 'rgba(0,0,0,1)'
+      this.context.strokeStyle = 'rgba(0, 0, 0, 1)'
     } else {
       this.context.globalCompositeOperation = 'source-over'
       this.context.strokeStyle = color
@@ -130,7 +131,10 @@ class CanvasLayer extends LayerBase {
   /**
    * Draw an image onto the offscreen canvas.
    */
-  drawImage (image: HTMLImageElement | HTMLCanvasElement | ImageBitmap, dx: number, dy: number, dw?: number, dh?: number) {
+  drawImage (
+    image: HTMLImageElement | HTMLCanvasElement | ImageBitmap,
+    dx: number, dy: number, dw?: number, dh?: number
+  ) {
     this.context.drawImage(image, dx, dy, dw ?? image.width, dh ?? image.height)
   }
 
@@ -247,7 +251,7 @@ class BitmapLayer extends CanvasLayer {
     options: Omit<ICreateImageLayerOption, 'scale'|'rotation'|'anchor'> & {
       scale?: number
       rotation?: number
-      anchor?: 'topLeft' | 'center'
+      anchor?: AnchorType
     }
   ): Promise<BitmapLayer> {
     const img = await loadImage(options.src, options.crossOrigin)
@@ -326,11 +330,11 @@ class BitmapLayer extends CanvasLayer {
 
   private constructor (options: {
     name?: string
-    space?: 'world' | 'screen'
+    space?: SpaceType
     x?: number
     y?: number
     scale?: number; rotation?: number
-    anchor?: 'topLeft' | 'center'
+    anchor?: AnchorType
     width: number
     height: number
   }) {
@@ -361,8 +365,8 @@ interface ICreateImageLayerOption {
   y?: number
   scale?: number
   rotation?: number // radians
-  anchor?: 'topLeft' | 'center'
-  space?: 'world' | 'screen'
+  anchor?: AnchorType
+  space?: SpaceType
   crossOrigin?: '' | 'anonymous' | 'use-credentials'
 }
 
@@ -373,17 +377,17 @@ class LayerManager {
   private _worldLayers: LayerBase[] = []
   private _screenLayers: LayerBase[] = []
 
-  private _sortStack (stack: LayerBase[]) {
-    stack.sort((a, b) => a.zIndex - b.zIndex)
-  }
-
-  addLayer (layer: LayerBase): string {
+  addLayer (layer: LayerBase, insertAt?: number): string {
     const stack = layer.space === 'world'
       ? this._worldLayers
       : this._screenLayers
 
+    if (typeof insertAt === 'number' && insertAt >= 0 && insertAt < stack.length) {
+      stack.splice(insertAt, 0, layer)
+      return layer.id
+    }
+
     stack.push(layer)
-    this._sortStack(stack)
     return layer.id
   }
 
@@ -417,32 +421,13 @@ class LayerManager {
     return this._worldLayers.find(l => l.id === id) || this._screenLayers.find(l => l.id === id)
   }
 
-  getAllLayers (space?: 'world' | 'screen'): LayerBase[] {
+  getAllLayers (space?: SpaceType): LayerBase[] {
     if (!space) {
-      return [...this._worldLayers, ...this._screenLayers].sort((a, b) => a.zIndex - b.zIndex)
+      return [...this._worldLayers, ...this._screenLayers]
     }
     return (
       space === 'world' ? this._worldLayers : this._screenLayers
-    ).slice().sort((a, b) => a.zIndex - b.zIndex)
-  }
-
-  setLayerZIndex (id: string, z: number) {
-    const l = this.getLayer(id); if (!l) return
-    l.zIndex = z
-    const stack = l.space === 'world' ? this._worldLayers : this._screenLayers
-    this._sortStack(stack)
-  }
-
-  bringLayerToFront (id: string) {
-    const l = this.getLayer(id); if (!l) return
-    l.zIndex = Math.max(...this.getAllLayers(l.space).map(x => x.zIndex), 0) + 1
-    this._sortStack(l.space === 'world' ? this._worldLayers : this._screenLayers)
-  }
-
-  sendLayerToBack (id: string) {
-    const l = this.getLayer(id); if (!l) return
-    l.zIndex = Math.min(...this.getAllLayers(l.space).map(x => x.zIndex), 0) - 1
-    this._sortStack(l.space === 'world' ? this._worldLayers : this._screenLayers)
+    ).slice()
   }
 
   /**
