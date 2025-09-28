@@ -7,11 +7,14 @@ import { ZoomPan2D, BrushCursor, LayerManager, ILayer, BitmapLayer } from '../..
 import dragCursorImg from './assets/cursor-darg.png'
 import transparentLayerImg from './assets/transparent-layer.png'
 import style from './index.module.styl'
-import { createPatternImage } from './utils.ts'
+import { createPatternImage, loadImage } from './utils.ts'
 
 // We assume the painting document is 2480x3507 (A4 paper).
 const DOCUMENT_WIDTH = 2480
 const DOCUMENT_HEIGHT = 3507
+
+const MIN_BRUSH_SIZE = 0
+const MAX_BRUSH_SIZE = 200
 
 type ToolType = 'move' | 'pen' | 'eraser'
 
@@ -24,8 +27,17 @@ const App = defineComponent({
     const layerListRef = ref<ILayer[]>([])
     const selectedLayerIdRef = ref<string>('')
     const toolRef = ref<ToolType>('move')
+    const brushSizeRef = ref(40)
+    const eraserSizeRef = ref(20)
 
-    const hideBrowserCursor = computed(() => {
+    const currentBrushSize = computed(() => {
+      if (toolRef.value === 'eraser') {
+        return eraserSizeRef.value
+      }
+      return brushSizeRef.value
+    })
+
+    const shouldHideBrowserCursor = computed(() => {
       return toolRef.value !== 'move'
     })
 
@@ -59,11 +71,21 @@ const App = defineComponent({
       view?.setPanEnabled(false)
       toolRef.value = 'pen'
       if (brushCursor) {
+        brushCursor.radiusWorld = brushSizeRef.value
         brushCursor.visible = true
       }
     }
 
-    const init = async () => {
+    const selectEraserTool = () => {
+      view?.setPanEnabled(false)
+      toolRef.value = 'eraser'
+      if (brushCursor) {
+        brushCursor.radiusWorld = eraserSizeRef.value
+        brushCursor.visible = true
+      }
+    }
+
+    const initView = () => {
       const canvas = canvasRef.value
       if (!canvas) {
         return
@@ -94,7 +116,9 @@ const App = defineComponent({
 
       // Fit the whole document to view.
       view.zoomDocumentToFit('contain')
+    }
 
+    const initInitialLayers = async () => {
       // Create layers.
       // =================
       // Create a layer that shows a checkerboard pattern to indicate transparency.
@@ -124,19 +148,19 @@ const App = defineComponent({
       addLayer(backgroundLayer)
 
       // Insert an image layer.
-      const avatarLayer = await layerManager.createImageLayer({
-        name: 'Avatar',
-        src: '/image.png',
-        x: 50,
-        y: 50,
+      const avatarImg = await loadImage('/image.png')
+      const avatarLayer = layerManager.createCanvasLayer({
+        name: 'My Avatar',
+        width: DOCUMENT_WIDTH,
+        height: DOCUMENT_HEIGHT,
         scale: 1,
         anchor: 'topLeft'
       })
       addLayer(avatarLayer)
+      avatarLayer.drawImage(avatarImg, 50, 50)
       selectedLayerIdRef.value = avatarLayer.id
 
-      // A cursor layer that always follows the mouse position.
-      // It is drawn in screen space, so it size is fixed and not affected by zoom.
+      // The drag cursor is drawn in screen space, so it size is fixed and not affected by zoom.
       dragCursorLayer = await layerManager.createImageLayer({
         width: 32,
         height: 32,
@@ -147,8 +171,9 @@ const App = defineComponent({
       dragCursorLayer.visible = false
 
       // Create a brush cursor layer.
+      // The brush cursor is drawn in world space, so its size is affected by zoom.
       brushCursor = new BrushCursor({
-        initialRadiusWorld: 12
+        initialRadiusWorld: brushSizeRef.value
       })
       brushCursor.visible = false
       layerManager.addLayer(brushCursor)
@@ -194,12 +219,39 @@ const App = defineComponent({
       view?.setPanEnabled(false)
     }
 
+    const setBrushSize = (size: number) => {
+      size = Math.max(MIN_BRUSH_SIZE, Math.min(MAX_BRUSH_SIZE, size))
+
+      if (toolRef.value === 'eraser') {
+        eraserSizeRef.value = size
+      } else {
+        brushSizeRef.value = size
+      }
+      if (brushCursor) {
+        brushCursor.radiusWorld = size
+      }
+    }
+
     const onKeyDown = (event: KeyboardEvent) => {
       const isSpace = event.code === 'Space' || event.key === ' '
       const currentTool = toolRef.value
       const enterMoveMode = isSpace && (currentTool === 'pen' || currentTool === 'eraser')
       if (enterMoveMode) {
         enterTempMoveMode()
+        return
+      }
+
+      const isA = event.key === 'a' || event.code === 'KeyA'
+      if (isA) {
+        const brushSize = currentBrushSize.value + 10
+        setBrushSize(brushSize)
+        return
+      }
+
+      const isS = event.key === 's' || event.code === 'KeyS'
+      if (isS) {
+        const brushSize = currentBrushSize.value - 10
+        setBrushSize(brushSize)
       }
     }
 
@@ -233,14 +285,17 @@ const App = defineComponent({
 
       const isE = event.key === 'e' || event.code === 'KeyE'
       if (isE) {
-        // selectEraserTool()
+        selectEraserTool()
       }
     }
 
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
 
-    onMounted(init)
+    onMounted(async () => {
+      initView()
+      await initInitialLayers()
+    })
 
     onBeforeUnmount(() => {
       window.addEventListener('keydown', onKeyDown)
@@ -281,33 +336,68 @@ const App = defineComponent({
       }</div>
     )
 
+    const ToolButtons = () => (
+      <div>
+        <button
+          class={[
+            style.toolbarButton,
+            toolRef.value === 'move' ? style.selected : ''
+          ]}
+          onClick={selectMoveTool}
+        >Move</button>
+        <button
+          class={[
+            style.toolbarButton,
+            toolRef.value === 'pen' ? style.selected : ''
+          ]}
+          onClick={selectPenTool}
+        >Pen</button>
+        <button
+          class={[
+            style.toolbarButton,
+            toolRef.value === 'eraser' ? style.selected : ''
+          ]}
+          onClick={selectEraserTool}
+        >Eraser</button>
+      </div>
+    )
+
+    const BrushSizeSlider = () => {
+      if (toolRef.value === 'move') {
+        return <></>
+      }
+      return (
+        <div class={style.brushSizeSlider}>
+          <span>Brush size:</span>
+          <input
+            value={currentBrushSize.value}
+            onInput={e => {
+              const rawValue = (e.target as HTMLInputElement).value
+              const brushSize = parseInt(rawValue, 10)
+              setBrushSize(brushSize)
+            }}
+            type='range' min={MIN_BRUSH_SIZE} max={MAX_BRUSH_SIZE}
+          />
+          <span>{currentBrushSize.value}</span>
+        </div>
+      )
+    }
+
     return () => (
       <div class={style.app}>
         <div class={style.mainStage}>
           <div
             class={[
               style.canvasContainer,
-              hideBrowserCursor.value ? style.hideCursor : ''
+              shouldHideBrowserCursor.value ? style.hideCursor : ''
             ]}
           >
             <canvas ref={canvasRef} onPointermove={onPointerMove}></canvas>
           </div>
 
           <div class={style.toolbar}>
-            <button
-              class={[
-                style.toolbarButton,
-                toolRef.value === 'move' ? style.selected : ''
-              ]}
-              onClick={selectMoveTool}
-            >Move</button>
-            <button
-              class={[
-                style.toolbarButton,
-                toolRef.value === 'pen' ? style.selected : ''
-              ]}
-              onClick={selectPenTool}
-            >Pen</button>
+            <ToolButtons />
+            <BrushSizeSlider />
           </div>
         </div>
 

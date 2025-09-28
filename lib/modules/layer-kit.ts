@@ -113,12 +113,25 @@ class CanvasLayer extends LayerBase {
   rotation = 0
   anchor: 'topLeft' | 'center' = 'topLeft'
 
-  /** 触发重绘离屏内容 */
+  /**
+   * Request a redraw of the offscreen canvas.
+   * This will call the redraw function you provided in the constructor.
+   */
   requestRedraw () {
     this._redraw?.(this.context, this.canvas)
   }
 
-  /** 通用命中：把世界/屏幕点逆变换到本地，再做 AABB 命中 */
+  /**
+   * Draw an image onto the offscreen canvas.
+   */
+  drawImage (image: HTMLImageElement | HTMLCanvasElement | ImageBitmap, dx: number, dy: number, dw?: number, dh?: number) {
+    this.context.drawImage(image, dx, dy, dw ?? image.width, dh ?? image.height)
+  }
+
+  /**
+   * Hit test the layer.
+   * Returns true if the point (x, y) in world/screen space is within the layer bounds.
+   */
   hitTest (x: number, y: number): boolean {
     const dx = x - this.x
     const dy = y - this.y
@@ -136,6 +149,9 @@ class CanvasLayer extends LayerBase {
     return rx >= lx && rx <= lx + w && ry >= ly && ry <= ly + h
   }
 
+  /**
+   * Render the layer onto the given ZoomPan2D context.
+   */
   render (view: ZoomPan2D) {
     if (!this.visible) {
       return
