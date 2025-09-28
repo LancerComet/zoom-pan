@@ -86,6 +86,10 @@ class ZoomPan2D {
     this._onUp()
   }
 
+  // ---- Interaction toggles ----
+  private _panEnabled = true
+  private _zoomEnabled = true
+
   // ---------- Document space ----------
   // 文档矩形（世界坐标），默认无边界（禁用）
   private _docEnabled = false
@@ -102,7 +106,9 @@ class ZoomPan2D {
 
   // ---------- Internals ----------
   private _clampPan (z: number) {
-    if (!this._docEnabled) return
+    if (!this._docEnabled) {
+      return
+    }
 
     const W = this.canvas.width / this._dpr
     const H = this.canvas.height / this._dpr
@@ -165,13 +171,18 @@ class ZoomPan2D {
 
     // --- C) 平移：拖拽中已直接更新；不拖拽时应用惯性 + 可选回零（你原有逻辑） ---
     if (!this._dragging) {
-      const dx = this._vx * dt
-      const dy = this._vy * dt
-      this._tx += dx
-      this._ty += dy
-      this._vx *= friction
-      this._vy *= friction
-      if (Math.hypot(this._vx, this._vy) < stopSpeed) {
+      if (this._panEnabled) {
+        const dx = this._vx * dt
+        const dy = this._vy * dt
+        this._tx += dx
+        this._ty += dy
+        this._vx *= friction
+        this._vy *= friction
+        if (Math.hypot(this._vx, this._vy) < stopSpeed) {
+          this._vx = 0; this._vy = 0
+        }
+      } else {
+        // 平移被禁用，确保没有残留速度
         this._vx = 0; this._vy = 0
       }
     }
@@ -269,6 +280,10 @@ class ZoomPan2D {
   }
 
   private _onWheel (e: WheelEvent) {
+    if (!this._zoomEnabled) {
+      return
+    }
+
     e.preventDefault()
     e.stopPropagation()
 
@@ -291,7 +306,7 @@ class ZoomPan2D {
   private _activePointerId: number | null = null
 
   private _onDown (e: PointerEvent) {
-    if (e.button !== 0) {
+    if (e.button !== 0 || !this._panEnabled) {
       return
     }
 
@@ -306,7 +321,7 @@ class ZoomPan2D {
   }
 
   private _onMove (e: PointerEvent) {
-    if (!this._dragging) {
+    if (!this._dragging || !this._panEnabled) {
       return
     }
 
@@ -363,6 +378,44 @@ class ZoomPan2D {
   }
 
   // ---------- Public API ----------
+  /** 是否启用拖拽平移 */
+  isPanEnabled () {
+    return this._panEnabled
+  }
+
+  /** 是否启用滚轮缩放 */
+  isZoomEnabled () {
+    return this._zoomEnabled
+  }
+
+  /** 启用/禁用拖拽平移 */
+  setPanEnabled (enabled: boolean) {
+    if (this._panEnabled === enabled) return
+    this._panEnabled = enabled
+    // 立刻终止正在进行的拖拽与惯性
+    if (!enabled) {
+      this._dragging = false
+      this._vx = 0; this._vy = 0
+    }
+  }
+
+  /** 启用/禁用滚轮缩放 */
+  setZoomEnabled (enabled: boolean) {
+    this._zoomEnabled = enabled
+  }
+
+  /** 便捷：导航模式（可拖拽+缩放） */
+  enableNavigation () {
+    this.setPanEnabled(true)
+    this.setZoomEnabled(true)
+  }
+
+  /** 便捷：绘制模式（锁定视图，不可拖拽/缩放） */
+  enableDrawingMode () {
+    this.setPanEnabled(false)
+    this.setZoomEnabled(false)
+  }
+
   /** 定义文档矩形（世界坐标） */
   setDocumentRect (x: number, y: number, w: number, h: number) {
     this._docEnabled = true

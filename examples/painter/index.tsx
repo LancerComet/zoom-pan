@@ -1,16 +1,19 @@
 /*
- * In this exmaple, we gonna show how to create a simple painter.
+ * In this example, we gonna show how to create a simple painter.
  */
 
-import { createApp, defineComponent, onBeforeUnmount, onMounted, ref } from 'vue'
-
-import { ZoomPan2D, BrushCursor, LayerManager } from '../../lib'
-
+import { computed, createApp, defineComponent, onBeforeUnmount, onMounted, ref, withModifiers } from 'vue'
+import { ZoomPan2D, BrushCursor, LayerManager, ILayer, BitmapLayer } from '../../lib'
+import dragCursorImg from './assets/cursor-darg.png'
+import transparentLayerImg from './assets/transparent-layer.png'
 import style from './index.module.styl'
+import { createPatternImage } from './utils.ts'
 
 // We assume the painting document is 2480x3507 (A4 paper).
 const DOCUMENT_WIDTH = 2480
 const DOCUMENT_HEIGHT = 3507
+
+type ToolType = 'move' | 'pen' | 'eraser'
 
 const App = defineComponent({
   name: 'App',
@@ -18,8 +21,47 @@ const App = defineComponent({
   setup () {
     const canvasRef = ref<HTMLCanvasElement | null>(null)
 
+    const layerListRef = ref<ILayer[]>([])
+    const selectedLayerIdRef = ref<string>('')
+    const toolRef = ref<ToolType>('move')
+
+    const hideBrowserCursor = computed(() => {
+      return toolRef.value !== 'move'
+    })
+
     const layerManager = new LayerManager()
     let view: ZoomPan2D | null = null
+
+    // This cursor layer acts as a drag cursor in the painter.
+    let dragCursorLayer: BitmapLayer | null = null
+
+    // A brush cursor layer that shows the brush size in world space.
+    // It is drawn in world space, so its size is affected by zoom.
+    let brushCursor: BrushCursor | null = null
+
+    const addLayer = (layer: ILayer) => {
+      layerListRef.value.push(layer)
+    }
+
+    const selectLayer = (layerId: string) => {
+      selectedLayerIdRef.value = layerId
+    }
+
+    const selectMoveTool = () => {
+      view?.setPanEnabled(true)
+      toolRef.value = 'move'
+      if (brushCursor) {
+        brushCursor.visible = false
+      }
+    }
+
+    const selectPenTool = () => {
+      view?.setPanEnabled(false)
+      toolRef.value = 'pen'
+      if (brushCursor) {
+        brushCursor.visible = true
+      }
+    }
 
     const init = async () => {
       const canvas = canvasRef.value
@@ -55,101 +97,224 @@ const App = defineComponent({
 
       // Create layers.
       // =================
-      // The layer that is used as the background of the document.
-      await layerManager.createCanvasLayer({
-        name: 'Background',
+      // Create a layer that shows a checkerboard pattern to indicate transparency.
+      const transparentImg = await createPatternImage(DOCUMENT_WIDTH, DOCUMENT_HEIGHT, transparentLayerImg)
+      layerManager.createCanvasLayer({
         width: DOCUMENT_WIDTH,
         height: DOCUMENT_HEIGHT,
         space: 'world',
-        x: 0,
-        y: 0,
         anchor: 'topLeft',
-        redraw (ctx, off) {
-          // 画一个淡黄色背景
-          ctx.fillStyle = '#ffffff'
-          ctx.fillRect(0, 0, off.width, off.height)
+        redraw (context, canvas) {
+          context.clearRect(0, 0, canvas.width, canvas.height)
+          context.drawImage(transparentImg, 0, 0)
         }
       })
 
+      // The layer that is used as the background of the document.
+      const backgroundLayer = layerManager.createCanvasLayer({
+        name: 'Background',
+        width: DOCUMENT_WIDTH,
+        height: DOCUMENT_HEIGHT,
+        anchor: 'topLeft',
+        redraw (context, canvas) {
+          context.fillStyle = '#ffffff'
+          context.fillRect(0, 0, canvas.width, canvas.height)
+        }
+      })
+      addLayer(backgroundLayer)
+
       // Insert an image layer.
-      await layerManager.createImageLayer({
+      const avatarLayer = await layerManager.createImageLayer({
+        name: 'Avatar',
         src: '/image.png',
         x: 50,
         y: 50,
         scale: 1,
         anchor: 'topLeft'
       })
+      addLayer(avatarLayer)
+      selectedLayerIdRef.value = avatarLayer.id
 
       // A cursor layer that always follows the mouse position.
       // It is drawn in screen space, so it size is fixed and not affected by zoom.
-      const cursorLayer = layerManager.createCanvasLayer({
+      dragCursorLayer = await layerManager.createImageLayer({
         width: 32,
         height: 32,
+        src: dragCursorImg,
         space: 'screen',
-        x: 0,
-        y: 0,
-        anchor: 'center',
-        redraw (context, canvas) {
-          context.clearRect(0, 0, canvas.width, canvas.height)
-
-          // Let's make a crosshair cursor.
-          context.strokeStyle = '#00d8ff'
-          context.lineWidth = 2
-          context.beginPath()
-          context.moveTo(0, 16)
-          context.lineTo(32, 16)
-          context.moveTo(16, 0)
-          context.lineTo(16, 32)
-          context.stroke()
-        }
+        anchor: 'center'
       })
+      dragCursorLayer.visible = false
 
-      // A brush cursor layer that shows the brush size in world space.
-      // It is drawn in world space, so its size is affected by zoom.
-      const brushCursor = new BrushCursor()
-      brushCursor.radiusWorld = 12 // Brush radius in world unit.
+      // Create a brush cursor layer.
+      brushCursor = new BrushCursor({
+        initialRadiusWorld: 12
+      })
+      brushCursor.visible = false
       layerManager.addLayer(brushCursor)
+    }
 
-      canvas.addEventListener('pointermove', event => {
-        const rect = canvas.getBoundingClientRect()
-        const cx = event.clientX - rect.left
-        const cy = event.clientY - rect.top
+    const onPointerMove = (event: PointerEvent) => {
+      const canvas = canvasRef.value
+      if (!canvas || !dragCursorLayer || !brushCursor) {
+        return
+      }
 
-        cursorLayer.x = cx
-        cursorLayer.y = cy
-        cursorLayer.requestRedraw()
+      const rect = canvas.getBoundingClientRect()
+      const cx = event.clientX - rect.left
+      const cy = event.clientY - rect.top
 
-        // Assign screen position to the brush cursor.
-        // It will be converted to world position in the BrushCursor.render() method.
-        brushCursor.screenX = cx
-        brushCursor.screenY = cy
-      })
+      dragCursorLayer.x = cx
+      dragCursorLayer.y = cy
+      dragCursorLayer.requestRedraw()
+
+      // Assign screen position to the brush cursor.
+      // It will be converted to world position in the BrushCursor.render() method.
+      brushCursor.screenX = cx
+      brushCursor.screenY = cy
+    }
+
+    const enterTempMoveMode = () => {
+      if (dragCursorLayer) {
+        dragCursorLayer.visible = true
+      }
+      if (brushCursor) {
+        brushCursor.visible = false
+      }
+      view?.setPanEnabled(true)
+    }
+
+    const leaveTempMoveMode = () => {
+      if (dragCursorLayer) {
+        dragCursorLayer.visible = false
+      }
+      if (brushCursor) {
+        brushCursor.visible = true
+      }
+      view?.setPanEnabled(false)
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      const isSpace = event.code === 'Space' || event.key === ' '
+      const currentTool = toolRef.value
+      const enterMoveMode = isSpace && (currentTool === 'pen' || currentTool === 'eraser')
+      if (enterMoveMode) {
+        enterTempMoveMode()
+      }
     }
 
     const onKeyUp = (event: KeyboardEvent) => {
       // Press Ctrl + 0 to reset the view.
-      if ((event.ctrlKey || event.metaKey) && (event.key === '0' || event.code === 'Digit0')) {
+      const isCtrl0 = (event.ctrlKey || event.metaKey) && (event.key === '0' || event.code === 'Digit0')
+      if (isCtrl0) {
         event.preventDefault()
         view?.zoomDocumentToFit('contain')
+        return
+      }
+
+      const isSpace = event.code === 'Space' || event.key === ' '
+      const currentTool = toolRef.value
+      const leaveMoveMode = isSpace && (currentTool === 'pen' || currentTool === 'eraser')
+      if (leaveMoveMode) {
+        leaveTempMoveMode()
+        return
+      }
+
+      const isB = event.key === 'b' || event.code === 'KeyB'
+      if (isB) {
+        selectPenTool()
+        return
+      }
+
+      const isV = event.key === 'v' || event.code === 'KeyV'
+      if (isV) {
+        selectMoveTool()
+      }
+
+      const isE = event.key === 'e' || event.code === 'KeyE'
+      if (isE) {
+        // selectEraserTool()
       }
     }
 
+    window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
 
-    onMounted(() => {
-      init()
-    })
+    onMounted(init)
 
     onBeforeUnmount(() => {
+      window.addEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
+      layerListRef.value = []
       layerManager.destroy()
       view?.destroy()
       view = null
     })
 
+    const LayerList = () => (
+      <div class={style.layerList}>{
+        layerListRef.value.slice().reverse().map(item => (
+          <div
+            key={item.id}
+            class={[
+              style.layerListItem,
+              item.id === selectedLayerIdRef.value ? style.selected : ''
+            ]}
+            onClick={() => selectLayer(item.id)}
+          >
+            <div>
+              <input
+                v-model={item.visible}
+                class={style.visibilityCheckbox}
+                type='checkbox'
+                onClick={withModifiers(() => {}, ['stop'])}
+              />
+            </div>
+
+            <div class={style.previewImg}></div>
+
+            <div class={style.layerInfo}>
+              <span>{ item.name }</span>
+            </div>
+          </div>
+        ))
+      }</div>
+    )
+
     return () => (
       <div class={style.app}>
-        <canvas ref={canvasRef}></canvas>
+        <div class={style.mainStage}>
+          <div
+            class={[
+              style.canvasContainer,
+              hideBrowserCursor.value ? style.hideCursor : ''
+            ]}
+          >
+            <canvas ref={canvasRef} onPointermove={onPointerMove}></canvas>
+          </div>
+
+          <div class={style.toolbar}>
+            <button
+              class={[
+                style.toolbarButton,
+                toolRef.value === 'move' ? style.selected : ''
+              ]}
+              onClick={selectMoveTool}
+            >Move</button>
+            <button
+              class={[
+                style.toolbarButton,
+                toolRef.value === 'pen' ? style.selected : ''
+              ]}
+              onClick={selectPenTool}
+            >Pen</button>
+          </div>
+        </div>
+
+        <div class={style.sideBar}>
+          <div class={style.sideBarHeader}>Layers</div>
+          <LayerList />
+        </div>
       </div>
     )
   }
