@@ -3,7 +3,7 @@
  */
 
 import { computed, createApp, defineComponent, onBeforeUnmount, onMounted, ref, withModifiers } from 'vue'
-import { ZoomPan2D, BrushCursor, LayerManager, BitmapLayer, LayerBase } from '../../lib'
+import { ZoomPan2D, BrushCursor, LayerManager, BitmapLayer, LayerBase, CanvasLayer } from '../../lib'
 import dragCursorImg from './assets/cursor-darg.png'
 import transparentLayerImg from './assets/transparent-layer.png'
 import style from './index.module.styl'
@@ -15,6 +15,8 @@ const DOCUMENT_HEIGHT = 3507
 
 const MIN_BRUSH_SIZE = 0
 const MAX_BRUSH_SIZE = 200
+
+const brushColor = '#000'
 
 type ToolType = 'move' | 'pen' | 'eraser'
 
@@ -30,6 +32,25 @@ const App = defineComponent({
     const brushSizeRef = ref(40)
     const eraserSizeRef = ref(20)
 
+    let isInTempMoveMode = false
+
+    let startStockLayer: CanvasLayer | null = null
+
+    // The ZoomPan2D instance that manages the view (canvas).
+    let view: ZoomPan2D | null = null
+
+    // LayerManager is used to manage all layers and render them in the view.
+    const layerManager = new LayerManager()
+
+    // This cursor layer acts as a drag cursor in the stage.
+    // When people use the pen / eraser tool while holding the space key, it appears.
+    // It is drawn in screen space, so its size is fixed and not affected by zoom.
+    let dragCursorLayer: BitmapLayer | null = null
+
+    // A brush cursor layer that shows the brush cursor in the stage.
+    // It is drawn in world space, so its size is affected by zoom.
+    let brushCursor: BrushCursor | null = null
+
     const currentBrushSize = computed(() => {
       if (toolRef.value === 'eraser') {
         return eraserSizeRef.value
@@ -40,18 +61,6 @@ const App = defineComponent({
     const shouldHideBrowserCursor = computed(() => {
       return toolRef.value !== 'move'
     })
-
-    const layerManager = new LayerManager()
-    let view: ZoomPan2D | null = null
-
-    // This cursor layer acts as a drag cursor in the stage.
-    // When people use the pen / eraser tool while holding the space key, it appears.
-    // It is drawn in screen space, so its size is fixed and not affected by zoom.
-    let dragCursorLayer: BitmapLayer | null = null
-
-    // A brush cursor layer that shows the brush cursor in the stage.
-    // It is drawn in world space, so its size is affected by zoom.
-    let brushCursor: BrushCursor | null = null
 
     const addLayer = (layer: LayerBase) => {
       layerListRef.value.push(layer)
@@ -127,17 +136,14 @@ const App = defineComponent({
       view.zoomDocumentToFit('contain')
     }
 
-    const initInitialLayers = async () => {
+    const initPresetLayers = async () => {
       // Create a layer that shows a checkerboard pattern to indicate transparency.
       const transparentImg = await createPatternImage(DOCUMENT_WIDTH, DOCUMENT_HEIGHT, transparentLayerImg)
-      layerManager.createCanvasLayer({
+      const l = layerManager.createCanvasLayer({
         width: DOCUMENT_WIDTH,
-        height: DOCUMENT_HEIGHT,
-        redraw (context, canvas) {
-          context.clearRect(0, 0, canvas.width, canvas.height)
-          context.drawImage(transparentImg, 0, 0)
-        }
+        height: DOCUMENT_HEIGHT
       })
+      l.drawImage(transparentImg, 0, 0)
 
       // The layer that is used as the background of the document.
       const backgroundLayer = layerManager.createCanvasLayer({
@@ -181,24 +187,67 @@ const App = defineComponent({
       layerManager.addLayer(brushCursor)
     }
 
+    const onPointerDown = (event: PointerEvent) => {
+      console.log('pointer down')
+
+      if (view && !isInTempMoveMode) {
+        const { wx, wy } = view.toWorld(event.offsetX, event.offsetY)
+        const currentLayer = layerManager.getLayer(selectedLayerIdRef.value)
+        if (currentLayer instanceof CanvasLayer && currentLayer.hitTest(wx, wy)) {
+          startStockLayer = currentLayer
+          const brushSize = brushSizeRef.value
+          currentLayer.beginStroke(wx, wy, brushColor, brushSize, event.pressure)
+        }
+      }
+    }
+
     const onPointerMove = (event: PointerEvent) => {
+      console.log('pointer move')
+
       const canvas = canvasRef.value
-      if (!canvas || !dragCursorLayer || !brushCursor) {
-        return
+
+      if (canvas && dragCursorLayer && brushCursor) {
+        const rect = canvas.getBoundingClientRect()
+        const cx = event.clientX - rect.left
+        const cy = event.clientY - rect.top
+
+        dragCursorLayer.x = cx
+        dragCursorLayer.y = cy
+        dragCursorLayer.requestRedraw()
+
+        // Assign screen position to the brush cursor.
+        // It will be converted to world position in the BrushCursor.render() method.
+        brushCursor.screenX = cx
+        brushCursor.screenY = cy
       }
 
-      const rect = canvas.getBoundingClientRect()
-      const cx = event.clientX - rect.left
-      const cy = event.clientY - rect.top
+      if (view && !isInTempMoveMode) {
+        const { wx, wy } = view.toWorld(event.offsetX, event.offsetY)
+        if (
+          toolRef.value === 'pen' &&
+          event.buttons === 1 &&
+          startStockLayer &&
+          startStockLayer.hitTest(wx, wy)
+        ) {
+          const brushSize = brushSizeRef.value
+          startStockLayer.stroke(wx, wy, brushColor, brushSize, event.pressure)
+        }
+      }
+    }
 
-      dragCursorLayer.x = cx
-      dragCursorLayer.y = cy
-      dragCursorLayer.requestRedraw()
+    const onPointerUp = (event: PointerEvent) => {
+      console.log('pointer up')
 
-      // Assign screen position to the brush cursor.
-      // It will be converted to world position in the BrushCursor.render() method.
-      brushCursor.screenX = cx
-      brushCursor.screenY = cy
+      if (view) {
+        const { wx, wy } = view.toWorld(event.offsetX, event.offsetY)
+        if (
+          toolRef.value === 'pen' &&
+          startStockLayer &&
+          startStockLayer.hitTest(wx, wy)
+        ) {
+          startStockLayer.endStroke()
+        }
+      }
     }
 
     /**
@@ -215,6 +264,7 @@ const App = defineComponent({
         brushCursor.visible = false
       }
       view?.setPanEnabled(true)
+      isInTempMoveMode = true
     }
 
     const leaveTempMoveMode = () => {
@@ -225,6 +275,7 @@ const App = defineComponent({
         brushCursor.visible = true
       }
       view?.setPanEnabled(false)
+      isInTempMoveMode = false
     }
 
     const setBrushSize = (size: number) => {
@@ -302,7 +353,7 @@ const App = defineComponent({
 
     onMounted(async () => {
       initView()
-      await initInitialLayers()
+      await initPresetLayers()
     })
 
     onBeforeUnmount(() => {
@@ -398,7 +449,12 @@ const App = defineComponent({
           shouldHideBrowserCursor.value ? style.hideCursor : ''
         ]}
       >
-        <canvas ref={canvasRef} onPointermove={onPointerMove}></canvas>
+        <canvas
+          ref={canvasRef}
+          onPointerdown={onPointerDown}
+          onPointermove={onPointerMove}
+          onPointerup={onPointerUp}
+        />
       </div>
     )
 

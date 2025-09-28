@@ -1,24 +1,27 @@
 const createPatternImage = (width: number, height: number, src: string): Promise<HTMLCanvasElement> => {
   return new Promise((resolve, reject) => {
-    const canvas = document.querySelector('canvas')!
+    const canvas = document.createElement('canvas')
     canvas.width = width
     canvas.height = height
 
     const ctx = canvas.getContext('2d')!
 
     const img = new Image()
-    img.src = src
     img.onload = () => {
       const pattern = ctx.createPattern(img, 'repeat')
       if (pattern) {
         ctx.fillStyle = pattern
         ctx.fillRect(0, 0, canvas.width, canvas.height)
+        resolve(canvas)
+      } else {
+        reject(new Error('Failed to create pattern'))
       }
-      resolve(canvas)
     }
     img.onerror = (err) => {
+      console.error(err)
       reject(err)
     }
+    img.src = src
   })
 }
 

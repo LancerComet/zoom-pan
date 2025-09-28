@@ -20,7 +20,7 @@ abstract class LayerBase {
 
   abstract render (view: ZoomPan2D): void
   abstract destroy (): void
-  abstract hitTest (x: number, y: number, view: ZoomPan2D): boolean
+  abstract hitTest (x: number, y: number, view?: ZoomPan2D): boolean
 
   protected constructor (name: string, type: string, space: 'world' | 'screen' = 'world') {
     this.name = name
@@ -68,6 +68,48 @@ class CanvasLayer extends LayerBase {
   rotation: number = 0
   anchor: 'topLeft' | 'center' = 'topLeft'
 
+  // Drawing.
+  // =================
+  private _drawing = false
+
+  beginStroke (
+    wx: number,
+    wy: number,
+    color: string,
+    size: number,
+    pressure: number = 1
+  ) {
+    const { lx, ly } = this.toLocalPoint(wx, wy)
+    this.context.beginPath()
+    this.context.moveTo(lx, ly)
+
+    this.context.strokeStyle = color
+    this.context.lineWidth = size * pressure
+    this.context.lineCap = 'round'
+    this.context.lineJoin = 'round'
+
+    this._drawing = true
+  }
+
+  stroke (wx: number, wy: number, color: string, size: number, pressure = 1) {
+    if (!this._drawing) {
+      return
+    }
+
+    const { lx, ly } = this.toLocalPoint(wx, wy)
+    this.context.lineTo(lx, ly)
+    this.context.strokeStyle = color
+    this.context.lineWidth = size * pressure
+    this.context.stroke()
+  }
+
+  endStroke () {
+    if (this._drawing) {
+      this.context.closePath()
+      this._drawing = false
+    }
+  }
+
   /**
    * Request a redraw of the offscreen canvas.
    * This will call the redraw function you provided in the constructor.
@@ -85,23 +127,43 @@ class CanvasLayer extends LayerBase {
 
   /**
    * Hit test the layer.
-   * Returns true if the point (x, y) in world/screen space is within the layer bounds.
+   * Returns true if the point (wx, wy) in world space is within the layer bounds.
    */
-  hitTest (x: number, y: number): boolean {
-    const dx = x - this.x
-    const dy = y - this.y
+  hitTest (wx: number, wy: number): boolean {
+    const { lx, ly } = this.toLocalPoint(wx, wy)
+    return lx >= 0 && lx <= this.canvas.width &&
+      ly >= 0 && ly <= this.canvas.height
+  }
+
+  /**
+   * Convert a point from world space to local layer space.
+   *
+   * @param wx
+   * @param wy
+   */
+  toLocalPoint (wx: number, wy: number): { lx: number, ly: number } {
+    // world → 相对图层原点
+    const dx = wx - this.x
+    const dy = wy - this.y
+
+    // world → 旋转逆变换
     const cos = Math.cos(-this.rotation)
     const sin = Math.sin(-this.rotation)
     const rx = dx * cos - dy * sin
     const ry = dx * sin + dy * cos
 
-    const w = this.canvas.width * this.scale
-    const h = this.canvas.height * this.scale
+    // world → local (缩放修正)
+    const lx = rx / this.scale
+    const ly = ry / this.scale
 
-    const lx = this.anchor === 'center' ? -w / 2 : 0
-    const ly = this.anchor === 'center' ? -h / 2 : 0
+    // anchor 偏移
+    const ax = this.anchor === 'center' ? this.canvas.width / 2 : 0
+    const ay = this.anchor === 'center' ? this.canvas.height / 2 : 0
 
-    return rx >= lx && rx <= lx + w && ry >= ly && ry <= ly + h
+    return {
+      lx: lx + ax,
+      ly: ly + ay
+    }
   }
 
   /**
@@ -375,8 +437,7 @@ class LayerManager {
   }
 
   /**
-   * 渲染所有图层（先 world 再 screen）
-   * ctx 已由 ZoomPan2D 清空并设置为世界矩阵
+   * Render all layers in target view.
    */
   renderAllLayersIn (view: ZoomPan2D) {
     // world stack（ctx 已在 ZoomPan2D 中设置为世界矩阵）
@@ -398,12 +459,20 @@ class LayerManager {
     }
   }
 
-  /** 命中测试（可选）：space 指定测试坐标是 world 还是 screen */
+  /**
+   * Hit test all layers (top-first).
+   *
+   * @param x
+   * @param y
+   * @param space
+   */
   hitTest (x: number, y: number, space: 'world'|'screen' = 'world'): LayerBase | undefined {
-    const stack = this.getAllLayers(space)
-    for (let i = stack.length - 1; i >= 0; i--) { // top-first
-      const l = stack[i]
-      if (l.hitTest && l.hitTest(x, y, null as unknown as ZoomPan2D)) return l
+    const allLayers = this.getAllLayers(space)
+    for (let i = allLayers.length - 1; i >= 0; i--) { // top-first
+      const layer = allLayers[i]
+      if (layer.hitTest && layer.hitTest(x, y)) {
+        return layer
+      }
     }
     return undefined
   }

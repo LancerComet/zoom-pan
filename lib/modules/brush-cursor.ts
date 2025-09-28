@@ -59,7 +59,7 @@ class BrushCursor extends LayerBase {
     const context = view.context
 
     // 1) 把屏幕坐标转换成世界坐标（关键！）
-    const { x: wx, y: wy } = view.toWorld(this.screenX, this.screenY)
+    const { wx, wy } = view.toWorld(this.screenX, this.screenY)
     const { zoom } = view.getTransform()
 
     // 2) 画世界半径的圆（半径不随缩放变，屏幕上看会放大/缩小）

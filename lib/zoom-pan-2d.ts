@@ -1,19 +1,3 @@
-// ZoomPan2D.ts
-// A lightweight, smooth zoom & pan controller for HTMLCanvasElement (2D context).
-// - Log-space zoom easing, continuous RAF
-// - Anchor zoom (mouse position)
-// - Pan drag with inertia (EMA + friction)
-// - Smooth reset (zoom->1, pan->(0,0))
-// - High-DPI (devicePixelRatio) support
-//
-// Usage:
-//   const zp = new ZoomPan2D(canvas, (ctx, view) => {
-//     // draw in WORLD coordinates (view already sets ctx transform)
-//     ctx.fillStyle = '#08f'
-//     ctx.fillRect(0, 0, 200, 120)
-//   })
-//   // optional: handle Ctrl+0 outside and call zp.resetSmooth()
-
 type RenderFn = (view: ZoomPan2D) => void
 
 interface ZoomPanOptions {
@@ -40,7 +24,6 @@ class ZoomPan2D {
 
   private _dpr = Math.max(1, window.devicePixelRatio || 1)
 
-  // Resize observer
   private _resizeObserver?: ResizeObserver
 
   private _isResetting = false
@@ -378,54 +361,45 @@ class ZoomPan2D {
   }
 
   // ---------- Public API ----------
-  /** 是否启用拖拽平移 */
   isPanEnabled () {
     return this._panEnabled
   }
 
-  /** 是否启用滚轮缩放 */
   isZoomEnabled () {
     return this._zoomEnabled
   }
 
-  /** 启用/禁用拖拽平移 */
   setPanEnabled (enabled: boolean) {
-    if (this._panEnabled === enabled) return
+    if (this._panEnabled === enabled) {
+      return
+    }
+
     this._panEnabled = enabled
+
     // 立刻终止正在进行的拖拽与惯性
     if (!enabled) {
       this._dragging = false
-      this._vx = 0; this._vy = 0
+      this._vx = 0
+      this._vy = 0
     }
   }
 
-  /** 启用/禁用滚轮缩放 */
   setZoomEnabled (enabled: boolean) {
     this._zoomEnabled = enabled
   }
 
-  /** 便捷：导航模式（可拖拽+缩放） */
-  enableNavigation () {
-    this.setPanEnabled(true)
-    this.setZoomEnabled(true)
-  }
-
-  /** 便捷：绘制模式（锁定视图，不可拖拽/缩放） */
-  enableDrawingMode () {
-    this.setPanEnabled(false)
-    this.setZoomEnabled(false)
-  }
-
-  /** 定义文档矩形（世界坐标） */
   setDocumentRect (x: number, y: number, w: number, h: number) {
     this._docEnabled = true
-    this._docX = x; this._docY = y; this._docW = w; this._docH = h
+    this._docX = x
+    this._docY = y
+    this._docW = w
+    this._docH = h
   }
 
-  /** 清空文档边界（不限制） */
-  clearDocumentRect () { this._docEnabled = false }
+  clearDocumentRect () {
+    this._docEnabled = false
+  }
 
-  /** 设置屏幕留白（单位：CSS 像素） */
   setDocumentMargins (px: { left?: number; right?: number; top?: number; bottom?: number }) {
     this._marginL = px.left ?? this._marginL
     this._marginR = px.right ?? this._marginR
@@ -433,7 +407,6 @@ class ZoomPan2D {
     this._marginB = px.bottom ?? this._marginB
   }
 
-  /** 让整张文档适配到视口（contain / cover / fitWidth / fitHeight），可带留白 */
   zoomDocumentToFit (mode: 'contain'|'cover'|'fitWidth'|'fitHeight' = 'contain') {
     if (!this._docEnabled) {
       return
@@ -482,16 +455,21 @@ class ZoomPan2D {
       wy >= this._docY && wy <= this._docY + this._docH
   }
 
-  /** Smoothly reset to zoom=1, pan=(0,0) */
+  /**
+   * Smoothly reset to zoom=1, pan=(0,0).
+   */
   resetSmooth () {
     this._isResetting = true
     this._targetLogZ = 0
-    // 可选：停止当前惯性，避免干扰
+
+    // 停止当前惯性，避免干扰
     this._vx = 0
     this._vy = 0
   }
 
-  /** Instantly reset (no animation) */
+  /**
+   * Instantly reset (no animation)
+   */
   resetInstant () {
     this._currentLogZ = 0
     this._targetLogZ = 0
@@ -499,14 +477,19 @@ class ZoomPan2D {
     this._ty = 0
   }
 
-  /** Convert screen (canvas client) -> world */
+  /**
+   * Convert screen (canvas client) -> world
+   */
   toWorld (x: number, y: number) {
     const z = Math.exp(this._currentLogZ)
     // account for DPR: our transform multiplies by (dpr*z) and translates by (dpr*tx, dpr*ty)
     // screen client px → canvas CSS px is 1:1; we stored tx/ty in CSS px
     const wx = (x - this._tx) / z
     const wy = (y - this._ty) / z
-    return { x: wx, y: wy }
+    return {
+      wx,
+      wy
+    }
   }
 
   /** Convert world -> screen (canvas client) */
