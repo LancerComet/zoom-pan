@@ -3,7 +3,7 @@
  */
 
 import { computed, createApp, defineComponent, onBeforeUnmount, onMounted, ref, withModifiers } from 'vue'
-import { ZoomPan2D, BrushCursor, LayerManager, ILayer, BitmapLayer } from '../../lib'
+import { ZoomPan2D, BrushCursor, LayerManager, BitmapLayer, LayerBase } from '../../lib'
 import dragCursorImg from './assets/cursor-darg.png'
 import transparentLayerImg from './assets/transparent-layer.png'
 import style from './index.module.styl'
@@ -24,7 +24,7 @@ const App = defineComponent({
   setup () {
     const canvasRef = ref<HTMLCanvasElement | null>(null)
 
-    const layerListRef = ref<ILayer[]>([])
+    const layerListRef = ref<LayerBase[]>([])
     const selectedLayerIdRef = ref<string>('')
     const toolRef = ref<ToolType>('move')
     const brushSizeRef = ref(40)
@@ -44,19 +44,29 @@ const App = defineComponent({
     const layerManager = new LayerManager()
     let view: ZoomPan2D | null = null
 
-    // This cursor layer acts as a drag cursor in the painter.
+    // This cursor layer acts as a drag cursor in the stage.
+    // When people use the pen / eraser tool while holding the space key, it appears.
+    // It is drawn in screen space, so its size is fixed and not affected by zoom.
     let dragCursorLayer: BitmapLayer | null = null
 
-    // A brush cursor layer that shows the brush size in world space.
+    // A brush cursor layer that shows the brush cursor in the stage.
     // It is drawn in world space, so its size is affected by zoom.
     let brushCursor: BrushCursor | null = null
 
-    const addLayer = (layer: ILayer) => {
+    const addLayer = (layer: LayerBase) => {
       layerListRef.value.push(layer)
     }
 
     const selectLayer = (layerId: string) => {
       selectedLayerIdRef.value = layerId
+    }
+
+    const removeLayer = (layerId: string) => {
+      const index = layerListRef.value.findIndex(item => item.id === layerId)
+      if (index > -1) {
+        layerListRef.value.splice(index, 1)
+      }
+      layerManager.removeLayer(layerId)
     }
 
     const selectMoveTool = () => {
@@ -71,7 +81,7 @@ const App = defineComponent({
       view?.setPanEnabled(false)
       toolRef.value = 'pen'
       if (brushCursor) {
-        brushCursor.radiusWorld = brushSizeRef.value
+        brushCursor.radius = brushSizeRef.value
         brushCursor.visible = true
       }
     }
@@ -80,7 +90,7 @@ const App = defineComponent({
       view?.setPanEnabled(false)
       toolRef.value = 'eraser'
       if (brushCursor) {
-        brushCursor.radiusWorld = eraserSizeRef.value
+        brushCursor.radius = eraserSizeRef.value
         brushCursor.visible = true
       }
     }
@@ -92,7 +102,6 @@ const App = defineComponent({
       }
 
       // View initialization.
-      // =================
       view = new ZoomPan2D(
         canvas,
         view => {
@@ -119,15 +128,11 @@ const App = defineComponent({
     }
 
     const initInitialLayers = async () => {
-      // Create layers.
-      // =================
       // Create a layer that shows a checkerboard pattern to indicate transparency.
       const transparentImg = await createPatternImage(DOCUMENT_WIDTH, DOCUMENT_HEIGHT, transparentLayerImg)
       layerManager.createCanvasLayer({
         width: DOCUMENT_WIDTH,
         height: DOCUMENT_HEIGHT,
-        space: 'world',
-        anchor: 'topLeft',
         redraw (context, canvas) {
           context.clearRect(0, 0, canvas.width, canvas.height)
           context.drawImage(transparentImg, 0, 0)
@@ -139,7 +144,6 @@ const App = defineComponent({
         name: 'Background',
         width: DOCUMENT_WIDTH,
         height: DOCUMENT_HEIGHT,
-        anchor: 'topLeft',
         redraw (context, canvas) {
           context.fillStyle = '#ffffff'
           context.fillRect(0, 0, canvas.width, canvas.height)
@@ -153,8 +157,7 @@ const App = defineComponent({
         name: 'My Avatar',
         width: DOCUMENT_WIDTH,
         height: DOCUMENT_HEIGHT,
-        scale: 1,
-        anchor: 'topLeft'
+        scale: 1
       })
       addLayer(avatarLayer)
       avatarLayer.drawImage(avatarImg, 50, 50)
@@ -172,9 +175,8 @@ const App = defineComponent({
 
       // Create a brush cursor layer.
       // The brush cursor is drawn in world space, so its size is affected by zoom.
-      brushCursor = new BrushCursor({
-        initialRadiusWorld: brushSizeRef.value
-      })
+      brushCursor = new BrushCursor()
+      brushCursor.radius = brushSizeRef.value
       brushCursor.visible = false
       layerManager.addLayer(brushCursor)
     }
@@ -199,6 +201,12 @@ const App = defineComponent({
       brushCursor.screenY = cy
     }
 
+    /**
+     * When the user presses Space key while using the pen or eraser tool,
+     * we temporarily enter the move tool mode.
+     * When the Space key is released, we go back to the previous tool.
+     * It behaves the same way as Photoshop.
+     */
     const enterTempMoveMode = () => {
       if (dragCursorLayer) {
         dragCursorLayer.visible = true
@@ -228,7 +236,7 @@ const App = defineComponent({
         brushSizeRef.value = size
       }
       if (brushCursor) {
-        brushCursor.radiusWorld = size
+        brushCursor.radius = size
       }
     }
 
@@ -362,43 +370,50 @@ const App = defineComponent({
       </div>
     )
 
-    const BrushSizeSlider = () => {
-      if (toolRef.value === 'move') {
-        return <></>
-      }
-      return (
-        <div class={style.brushSizeSlider}>
-          <span>Brush size:</span>
-          <input
-            value={currentBrushSize.value}
-            onInput={e => {
-              const rawValue = (e.target as HTMLInputElement).value
-              const brushSize = parseInt(rawValue, 10)
-              setBrushSize(brushSize)
-            }}
-            type='range' min={MIN_BRUSH_SIZE} max={MAX_BRUSH_SIZE}
-          />
-          <span>{currentBrushSize.value}</span>
-        </div>
-      )
-    }
+    const BrushSizeSlider = () => (
+      <div
+        class={[
+          style.brushSizeSlider,
+          toolRef.value === 'move' ? style.hide : ''
+        ]}
+      >
+        <span>Brush size:</span>
+        <input
+          value={currentBrushSize.value}
+          onInput={e => {
+            const rawValue = (e.target as HTMLInputElement).value
+            const brushSize = parseInt(rawValue, 10)
+            setBrushSize(brushSize)
+          }}
+          type='range' min={MIN_BRUSH_SIZE} max={MAX_BRUSH_SIZE}
+        />
+        <span>{currentBrushSize.value}</span>
+      </div>
+    )
+
+    const CanvasContainer = () => (
+      <div
+        class={[
+          style.canvasContainer,
+          shouldHideBrowserCursor.value ? style.hideCursor : ''
+        ]}
+      >
+        <canvas ref={canvasRef} onPointermove={onPointerMove}></canvas>
+      </div>
+    )
+
+    const Toolbar = () => (
+      <div class={style.toolbar}>
+        <ToolButtons />
+        <BrushSizeSlider />
+      </div>
+    )
 
     return () => (
       <div class={style.app}>
         <div class={style.mainStage}>
-          <div
-            class={[
-              style.canvasContainer,
-              shouldHideBrowserCursor.value ? style.hideCursor : ''
-            ]}
-          >
-            <canvas ref={canvasRef} onPointermove={onPointerMove}></canvas>
-          </div>
-
-          <div class={style.toolbar}>
-            <ToolButtons />
-            <BrushSizeSlider />
-          </div>
+          <CanvasContainer />
+          <Toolbar />
         </div>
 
         <div class={style.sideBar}>

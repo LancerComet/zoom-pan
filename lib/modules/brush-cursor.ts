@@ -1,4 +1,4 @@
-import type { ZoomPan2D } from '../zoom-pan-2d'
+import { ZoomPan2D } from '../zoom-pan-2d'
 import { LayerBase } from './layer-kit'
 
 class BrushCursor extends LayerBase {
@@ -24,7 +24,7 @@ class BrushCursor extends LayerBase {
    *
    * @default 20
    */
-  radiusWorld: number = 20
+  radius: number = 20
 
   /**
    * Stroke color of the brush circle.
@@ -46,6 +46,10 @@ class BrushCursor extends LayerBase {
    * @default false
    */
   dashed: boolean = false
+
+  hitTest (): boolean {
+    return false
+  }
 
   render (view: ZoomPan2D) {
     if (!this.visible) {
@@ -71,7 +75,7 @@ class BrushCursor extends LayerBase {
     }
 
     context.beginPath()
-    context.arc(wx, wy, this.radiusWorld, 0, Math.PI * 2)
+    context.arc(wx, wy, this.radius, 0, Math.PI * 2)
 
     if (this.fillStyle) {
       context.fillStyle = this.fillStyle
@@ -81,19 +85,14 @@ class BrushCursor extends LayerBase {
     context.restore()
   }
 
-  destroy() {
+  destroy () {
     // ...
   }
 
-  constructor (options?: {
-    initialRadiusWorld?: number
-  }) {
+  constructor () {
     super('brush-preview', 'world')
     this.visible = true
     this.opacity = 1
-    if (typeof options?.initialRadiusWorld === 'number') {
-      this.radiusWorld = options.initialRadiusWorld
-    }
   }
 }
 

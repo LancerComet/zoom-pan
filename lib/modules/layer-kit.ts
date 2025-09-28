@@ -1,78 +1,28 @@
-// LayerKit.ts
-// Layer system for ZoomPan2D: world-space layers + screen-space overlay layers.
-// Features: image layers, offscreen-canvas layers, z-order, visibility, opacity, blend, hitTest.
-
 import { loadImage } from '../utils'
 import type { ZoomPan2D } from '../zoom-pan-2d'
 
- type LayerId = string
- type BlendMode = GlobalCompositeOperation
-
- interface LayerInfo {
-  id: LayerId
-  type: string
-  visible: boolean
-  opacity: number
-  blend: BlendMode
-  zIndex: number
-  space: 'world' | 'screen'
-}
-
- interface ILayer {
-  name: string
-  readonly id: LayerId
-  readonly type: string
-  space: 'world' | 'screen'
-  visible: boolean
-  opacity: number
-  blend: BlendMode
-  zIndex: number
-
-  /** draw: ctx 已经在正确坐标系（world: 由 ZoomPan2D 设置; screen: 已 reset 到单位矩阵） */
-  render (view: ZoomPan2D): void
-
-  /** 可选的命中测试（世界或屏幕坐标，取决于 space） */
-  hitTest? (x: number, y: number, view: ZoomPan2D): boolean
-
-  /** 返回可序列化信息（不含大对象） */
-  getInfo (): LayerInfo
-
-  /** 资源释放（如 revokeObjectURL） */
-  destroy? (): void
-}
+type BlendMode = GlobalCompositeOperation
 
 /* ---------------------------------------
  * Base layer
  * ------------------------------------- */
 let __LAYER_SEQ = 0
 
-abstract class LayerBase implements ILayer {
-  id: LayerId
+abstract class LayerBase {
+  readonly id: string
   type: string
   name: string
   space: 'world' | 'screen' = 'world'
-  visible = true
-  opacity = 1
+  visible: boolean = true
+  opacity: number = 1
   blend: BlendMode = 'source-over'
-  zIndex = 0
-
-  getInfo (): LayerInfo {
-    return {
-      id: this.id,
-      type: this.type,
-      visible: this.visible,
-      opacity: this.opacity,
-      blend: this.blend,
-      zIndex: this.zIndex,
-      space: this.space
-    }
-  }
+  zIndex: number = 0
 
   abstract render (view: ZoomPan2D): void
-
   abstract destroy (): void
+  abstract hitTest (x: number, y: number, view: ZoomPan2D): boolean
 
-  constructor (name: string, type: string, space: 'world' | 'screen' = 'world') {
+  protected constructor (name: string, type: string, space: 'world' | 'screen' = 'world') {
     this.name = name
     this.id = `layer_${type}_${++__LAYER_SEQ}`
     this.type = type
@@ -87,14 +37,18 @@ interface ICreateCanvasLayerOption {
   name?: string
   width: number
   height: number
+
+  /**
+   * The space of the layer, either 'world' or 'screen'.
+   *
+   * @default 'world'
+   */
   space?: 'world' | 'screen'
   x?: number
   y?: number
   scale?: number
   rotation?: number
   anchor?: 'topLeft' | 'center'
-
-  /** 当需要重绘离屏时调用，传入离屏 ctx（单位矩阵，屏幕像素） */
   redraw?: (context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => void
 }
 
@@ -103,14 +57,15 @@ interface ICreateCanvasLayerOption {
  * You can draw anything you want on the offscreen canvas, and it will be rendered as a layer.
  */
 class CanvasLayer extends LayerBase {
-  private _redraw?: (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => void
+  private readonly _redraw?: (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => void
 
-  canvas: HTMLCanvasElement
-  context: CanvasRenderingContext2D
-  x = 0
-  y = 0
-  scale = 1
-  rotation = 0
+  readonly canvas: HTMLCanvasElement
+  readonly context: CanvasRenderingContext2D
+
+  x: number = 0
+  y: number = 0
+  scale: number = 1
+  rotation: number = 0
   anchor: 'topLeft' | 'center' = 'topLeft'
 
   /**
@@ -177,7 +132,11 @@ class CanvasLayer extends LayerBase {
   }
 
   constructor (options: ICreateCanvasLayerOption) {
-    super(options.name || '', 'canvas', options.space ?? 'world')
+    super(
+      options.name || '',
+      'canvas',
+      options.space ?? 'world'
+    )
     this.canvas = document.createElement('canvas')
     this.canvas.width = options.width
     this.canvas.height = options.height
@@ -340,14 +299,14 @@ interface ICreateImageLayerOption {
  * Layer Manager
  * ------------------------------------- */
 class LayerManager {
-  private _worldLayers: ILayer[] = []
-  private _screenLayers: ILayer[] = []
+  private _worldLayers: LayerBase[] = []
+  private _screenLayers: LayerBase[] = []
 
-  private _sortStack (stack: ILayer[]) {
+  private _sortStack (stack: LayerBase[]) {
     stack.sort((a, b) => a.zIndex - b.zIndex)
   }
 
-  addLayer (layer: ILayer): LayerId {
+  addLayer (layer: LayerBase): string {
     const stack = layer.space === 'world'
       ? this._worldLayers
       : this._screenLayers
@@ -369,7 +328,7 @@ class LayerManager {
     return layer
   }
 
-  removeLayer (id: LayerId) {
+  removeLayer (id: string) {
     const idxW = this._worldLayers.findIndex(l => l.id === id)
     if (idxW >= 0) {
       this._worldLayers[idxW].destroy?.()
@@ -383,11 +342,11 @@ class LayerManager {
     }
   }
 
-  getLayer (id: LayerId): ILayer | undefined {
+  getLayer (id: string): LayerBase | undefined {
     return this._worldLayers.find(l => l.id === id) || this._screenLayers.find(l => l.id === id)
   }
 
-  getAllLayers (space?: 'world' | 'screen'): ILayer[] {
+  getAllLayers (space?: 'world' | 'screen'): LayerBase[] {
     if (!space) {
       return [...this._worldLayers, ...this._screenLayers].sort((a, b) => a.zIndex - b.zIndex)
     }
@@ -396,20 +355,20 @@ class LayerManager {
     ).slice().sort((a, b) => a.zIndex - b.zIndex)
   }
 
-  setLayerZIndex (id: LayerId, z: number) {
+  setLayerZIndex (id: string, z: number) {
     const l = this.getLayer(id); if (!l) return
     l.zIndex = z
     const stack = l.space === 'world' ? this._worldLayers : this._screenLayers
     this._sortStack(stack)
   }
 
-  bringLayerToFront (id: LayerId) {
+  bringLayerToFront (id: string) {
     const l = this.getLayer(id); if (!l) return
     l.zIndex = Math.max(...this.getAllLayers(l.space).map(x => x.zIndex), 0) + 1
     this._sortStack(l.space === 'world' ? this._worldLayers : this._screenLayers)
   }
 
-  sendLayerToBack (id: LayerId) {
+  sendLayerToBack (id: string) {
     const l = this.getLayer(id); if (!l) return
     l.zIndex = Math.min(...this.getAllLayers(l.space).map(x => x.zIndex), 0) - 1
     this._sortStack(l.space === 'world' ? this._worldLayers : this._screenLayers)
@@ -440,7 +399,7 @@ class LayerManager {
   }
 
   /** 命中测试（可选）：space 指定测试坐标是 world 还是 screen */
-  hitTest (x: number, y: number, space: 'world'|'screen' = 'world'): ILayer | undefined {
+  hitTest (x: number, y: number, space: 'world'|'screen' = 'world'): LayerBase | undefined {
     const stack = this.getAllLayers(space)
     for (let i = stack.length - 1; i >= 0; i--) { // top-first
       const l = stack[i]
@@ -466,9 +425,6 @@ export {
 }
 
 export type {
-  ILayer,
-  LayerInfo,
-  LayerId,
   BlendMode,
   ICreateImageLayerOption,
   ICreateCanvasLayerOption
