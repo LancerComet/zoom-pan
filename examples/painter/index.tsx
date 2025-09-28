@@ -33,7 +33,8 @@ const App = defineComponent({
 
     let isInTempMoveMode = false
 
-    let startStockLayer: CanvasLayer | null = null
+    // The layer that is currently being drawn (stroked) on.
+    let currentStrokeLayer: CanvasLayer | null = null
 
     // The ZoomPan2D instance that manages the view (canvas).
     let view: ZoomPan2D | null = null
@@ -190,10 +191,13 @@ const App = defineComponent({
       if (view && !isInTempMoveMode) {
         const { wx, wy } = view.toWorld(event.offsetX, event.offsetY)
         const currentLayer = layerManager.getLayer(selectedLayerIdRef.value)
-        if (currentLayer instanceof CanvasLayer && currentLayer.hitTest(wx, wy)) {
-          startStockLayer = currentLayer
-          const brushSize = brushSizeRef.value
-          currentLayer.beginStroke(wx, wy, brushColor, brushSize, event.pressure)
+        if (
+          currentLayer instanceof CanvasLayer &&
+          currentLayer.visible &&
+          currentLayer.hitTest(wx, wy)
+        ) {
+          currentStrokeLayer = currentLayer
+          currentLayer.beginStroke(wx, wy)
         }
       }
     }
@@ -218,14 +222,21 @@ const App = defineComponent({
 
       if (view && !isInTempMoveMode) {
         const { wx, wy } = view.toWorld(event.offsetX, event.offsetY)
+        const isBrush = toolRef.value === 'pen'
+        const isEraser = toolRef.value === 'eraser'
         if (
-          toolRef.value === 'pen' &&
+          (isBrush || isEraser) &&
           event.buttons === 1 &&
-          startStockLayer &&
-          startStockLayer.hitTest(wx, wy)
+          currentStrokeLayer &&
+          currentStrokeLayer.visible &&
+          currentStrokeLayer.hitTest(wx, wy)
         ) {
-          const brushSize = brushSizeRef.value
-          startStockLayer.stroke(wx, wy, brushColor, brushSize, event.pressure)
+          const brushSize = currentBrushSize.value
+          const pressure = event.pressure
+          currentStrokeLayer.stroke(
+            wx, wy, brushColor, brushSize, pressure,
+            isEraser ? 'eraser' : 'brush'
+          )
         }
       }
     }
@@ -235,10 +246,10 @@ const App = defineComponent({
         const { wx, wy } = view.toWorld(event.offsetX, event.offsetY)
         if (
           toolRef.value === 'pen' &&
-          startStockLayer &&
-          startStockLayer.hitTest(wx, wy)
+          currentStrokeLayer &&
+          currentStrokeLayer.hitTest(wx, wy)
         ) {
-          startStockLayer.endStroke()
+          currentStrokeLayer.endStroke()
         }
       }
     }
