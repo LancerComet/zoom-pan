@@ -71,43 +71,39 @@ class CanvasLayer extends LayerBase {
   // Drawing.
   // =================
   private _drawing = false
+  private _lastX: number = 0
+  private _lastY: number = 0
 
-  beginStroke (
-    wx: number,
-    wy: number,
-    color: string,
-    size: number,
-    pressure: number = 1
-  ) {
+  beginStroke (wx: number, wy: number, color: string, size: number, pressure = 1) {
     const { lx, ly } = this.toLocalPoint(wx, wy)
-    this.context.beginPath()
-    this.context.moveTo(lx, ly)
-
-    this.context.strokeStyle = color
-    this.context.lineWidth = size * pressure
-    this.context.lineCap = 'round'
-    this.context.lineJoin = 'round'
+    this._lastX = lx
+    this._lastY = ly
 
     this._drawing = true
   }
 
   stroke (wx: number, wy: number, color: string, size: number, pressure = 1) {
-    if (!this._drawing) {
-      return
-    }
+    if (!this._drawing) return
 
     const { lx, ly } = this.toLocalPoint(wx, wy)
+
+    this.context.beginPath()
+    this.context.moveTo(this._lastX, this._lastY)
     this.context.lineTo(lx, ly)
+
     this.context.strokeStyle = color
     this.context.lineWidth = size * pressure
+    this.context.lineCap = 'round'
+    this.context.lineJoin = 'round'
     this.context.stroke()
+    this.context.closePath()
+
+    this._lastX = lx
+    this._lastY = ly
   }
 
   endStroke () {
-    if (this._drawing) {
-      this.context.closePath()
-      this._drawing = false
-    }
+    this._drawing = false
   }
 
   /**

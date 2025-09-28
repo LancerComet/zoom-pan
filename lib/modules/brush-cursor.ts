@@ -75,7 +75,7 @@ class BrushCursor extends LayerBase {
     }
 
     context.beginPath()
-    context.arc(wx, wy, this.radius, 0, Math.PI * 2)
+    context.arc(wx, wy, this.radius / 2, 0, Math.PI * 2)
 
     if (this.fillStyle) {
       context.fillStyle = this.fillStyle

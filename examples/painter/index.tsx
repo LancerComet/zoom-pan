@@ -1,7 +1,6 @@
 /*
  * In this example, we gonna show how to create a simple painter.
  */
-
 import { computed, createApp, defineComponent, onBeforeUnmount, onMounted, ref, withModifiers } from 'vue'
 import { ZoomPan2D, BrushCursor, LayerManager, BitmapLayer, LayerBase, CanvasLayer } from '../../lib'
 import dragCursorImg from './assets/cursor-darg.png'
@@ -9,9 +8,9 @@ import transparentLayerImg from './assets/transparent-layer.png'
 import style from './index.module.styl'
 import { createPatternImage, loadImage } from './utils.ts'
 
-// We assume the painting document is 2480x3507 (A4 paper).
-const DOCUMENT_WIDTH = 2480
-const DOCUMENT_HEIGHT = 3507
+// Document size, just like what in Photoshop.
+const DOCUMENT_WIDTH = 1200
+const DOCUMENT_HEIGHT = 2000
 
 const MIN_BRUSH_SIZE = 0
 const MAX_BRUSH_SIZE = 200
@@ -90,7 +89,7 @@ const App = defineComponent({
       view?.setPanEnabled(false)
       toolRef.value = 'pen'
       if (brushCursor) {
-        brushCursor.radius = brushSizeRef.value
+        brushCursor.radius = brushSizeRef.value / 2
         brushCursor.visible = true
       }
     }
@@ -99,7 +98,7 @@ const App = defineComponent({
       view?.setPanEnabled(false)
       toolRef.value = 'eraser'
       if (brushCursor) {
-        brushCursor.radius = eraserSizeRef.value
+        brushCursor.radius = eraserSizeRef.value / 2
         brushCursor.visible = true
       }
     }
@@ -182,14 +181,12 @@ const App = defineComponent({
       // Create a brush cursor layer.
       // The brush cursor is drawn in world space, so its size is affected by zoom.
       brushCursor = new BrushCursor()
-      brushCursor.radius = brushSizeRef.value
+      brushCursor.radius = brushSizeRef.value / 2
       brushCursor.visible = false
       layerManager.addLayer(brushCursor)
     }
 
     const onPointerDown = (event: PointerEvent) => {
-      console.log('pointer down')
-
       if (view && !isInTempMoveMode) {
         const { wx, wy } = view.toWorld(event.offsetX, event.offsetY)
         const currentLayer = layerManager.getLayer(selectedLayerIdRef.value)
@@ -202,8 +199,6 @@ const App = defineComponent({
     }
 
     const onPointerMove = (event: PointerEvent) => {
-      console.log('pointer move')
-
       const canvas = canvasRef.value
 
       if (canvas && dragCursorLayer && brushCursor) {
@@ -236,8 +231,6 @@ const App = defineComponent({
     }
 
     const onPointerUp = (event: PointerEvent) => {
-      console.log('pointer up')
-
       if (view) {
         const { wx, wy } = view.toWorld(event.offsetX, event.offsetY)
         if (
@@ -287,7 +280,7 @@ const App = defineComponent({
         brushSizeRef.value = size
       }
       if (brushCursor) {
-        brushCursor.radius = size
+        brushCursor.radius = size / 2
       }
     }
 
@@ -452,7 +445,9 @@ const App = defineComponent({
         <canvas
           ref={canvasRef}
           onPointerdown={onPointerDown}
-          onPointermove={onPointerMove}
+          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+          // @ts-expect-error
+          onPointerrawupdate={onPointerMove}
           onPointerup={onPointerUp}
         />
       </div>
