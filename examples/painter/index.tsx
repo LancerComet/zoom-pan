@@ -471,7 +471,9 @@ const App = defineComponent({
 
     const onWindowBlur = () => {
       leaveColorPickerMode()
-      leaveTempMoveMode()
+      if (isPaintToolSelected.value) {
+        leaveTempMoveMode()
+      }
     }
 
     window.addEventListener('keydown', onKeyDown)
