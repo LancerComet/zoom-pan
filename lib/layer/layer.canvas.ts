@@ -61,7 +61,9 @@ class CanvasLayer extends LayerBase {
 
     if (this._historyManager) {
       try {
-        this._strokeStartSnapshot = this.context.getImageData(0, 0, this.canvas.width, this.canvas.height)
+        this._strokeStartSnapshot = this.context.getImageData(
+          0, 0, this.canvas.width, this.canvas.height
+        )
       } catch {
         this._strokeStartSnapshot = null
       }
@@ -128,7 +130,9 @@ class CanvasLayer extends LayerBase {
   }
 
   endStroke () {
-    if (!this._drawing) return
+    if (!this._drawing) {
+      return
+    }
 
     this._drawing = false
 

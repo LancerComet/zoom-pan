@@ -18,26 +18,12 @@ abstract class BaseCommand implements ICommand {
   /**
    * 判断两个命令是否可以合并（例如连续的笔画操作）
    */
-  canMerge? (other: ICommand): boolean {
-    if (other) {
-      return false
-    }
-    return false
-  }
+  abstract canMerge? (other: ICommand): boolean
 
   /**
    * 合并两个兼容的命令
    */
-  merge? (other: ICommand): ICommand {
-    return other
-  }
-
-  /**
-   * 获取命令的描述信息，用于UI显示
-   */
-  getDescription? (): string {
-    return 'Unknown operation'
-  }
+  abstract merge? (other: ICommand): ICommand
 
   /**
    * 获取命令的时间戳
@@ -48,3 +34,4 @@ abstract class BaseCommand implements ICommand {
 }
 
 export { BaseCommand }
+

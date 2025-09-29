@@ -17,70 +17,6 @@ class StrokeCommand extends BaseCommand {
   private hasLiveApplied: boolean
   private isExecuted = false
 
-  constructor (layer: CanvasLayer, strokeData: IStrokeData, options?: StrokeCommandOptions) {
-    super('stroke')
-    this.layer = layer
-    this.strokeData = {
-      ...strokeData,
-      points: strokeData.points.slice()
-    }
-    this.previousImageData = options?.snapshot ?? null
-    this.hasLiveApplied = options?.appliedFromLive ?? false
-  }
-
-  execute (): void {
-    if (this.isExecuted) return
-
-    if (!this.previousImageData) {
-      this.previousImageData = this.captureCurrentState()
-    }
-
-    if (this.hasLiveApplied) {
-      this.hasLiveApplied = false
-    } else {
-      this.performStroke()
-    }
-
-    this.isExecuted = true
-  }
-
-  undo (): void {
-    if (!this.isExecuted) return
-
-    this.restorePreviousState()
-    this.isExecuted = false
-  }
-
-  canMerge (other: ICommand): boolean {
-    if (!(other instanceof StrokeCommand)) return false
-    if (other.layer.id !== this.layer.id) return false
-
-    const timeDiff = Math.abs(other.getTimestamp() - this.getTimestamp())
-    if (timeDiff > 100) {
-      return false
-    }
-
-    return (
-      other.strokeData.color === this.strokeData.color &&
-      other.strokeData.size === this.strokeData.size &&
-      other.strokeData.mode === this.strokeData.mode
-    )
-  }
-
-  merge (other: ICommand): ICommand {
-    if (!(other instanceof StrokeCommand)) {
-      return other
-    }
-
-    this.strokeData.points.push(...other.strokeData.points)
-    this.timestamp = other.getTimestamp()
-    return this
-  }
-
-  getDescription (): string {
-    return this.strokeData.mode === 'brush' ? 'Brush' : 'Eraser'
-  }
-
   private captureCurrentState (): ImageData | null {
     try {
       const { canvas, context } = this.layer
@@ -146,7 +82,73 @@ class StrokeCommand extends BaseCommand {
     context.restore()
     context.globalCompositeOperation = 'source-over'
   }
+
+  execute (): void {
+    if (this.isExecuted) return
+
+    if (!this.previousImageData) {
+      this.previousImageData = this.captureCurrentState()
+    }
+
+    if (this.hasLiveApplied) {
+      this.hasLiveApplied = false
+    } else {
+      this.performStroke()
+    }
+
+    this.isExecuted = true
+  }
+
+  undo (): void {
+    if (!this.isExecuted) return
+
+    this.restorePreviousState()
+    this.isExecuted = false
+  }
+
+  canMerge (other: ICommand): boolean {
+    if (!(other instanceof StrokeCommand)) return false
+    if (other.layer.id !== this.layer.id) return false
+
+    const timeDiff = Math.abs(other.getTimestamp() - this.getTimestamp())
+    if (timeDiff > 100) {
+      return false
+    }
+
+    return (
+      other.strokeData.color === this.strokeData.color &&
+      other.strokeData.size === this.strokeData.size &&
+      other.strokeData.mode === this.strokeData.mode
+    )
+  }
+
+  merge (other: ICommand): ICommand {
+    if (!(other instanceof StrokeCommand)) {
+      return other
+    }
+
+    this.strokeData.points.push(...other.strokeData.points)
+    this.timestamp = other.getTimestamp()
+    return this
+  }
+
+  constructor (layer: CanvasLayer, strokeData: IStrokeData, options?: StrokeCommandOptions) {
+    super('stroke')
+    this.layer = layer
+    this.strokeData = {
+      ...strokeData,
+      points: strokeData.points.slice()
+    }
+    this.previousImageData = options?.snapshot ?? null
+    this.hasLiveApplied = options?.appliedFromLive ?? false
+  }
 }
 
-export { StrokeCommand }
-export type { StrokeCommandOptions }
+export {
+  StrokeCommand
+}
+
+export type {
+  StrokeCommandOptions
+}
+

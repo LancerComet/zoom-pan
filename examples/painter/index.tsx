@@ -80,16 +80,6 @@ const App = defineComponent({
 
     // History manager for undo/redo functionality
     const historyManager = new HistoryManager(50)
-    const undoStackRef = ref(historyManager.undoStack)
-    const redoStackRef = ref(historyManager.redoStack)
-
-    const canUndo = computed(() => {
-      return undoStackRef.value.length > 0
-    })
-
-    const canRedo = computed(() => {
-      return redoStackRef.value.length > 0
-    })
 
     // This cursor layer acts as a pan cursor in the stage.
     // When people use the pen / eraser tool while holding the space key, it appears.
@@ -277,12 +267,12 @@ const App = defineComponent({
     const initPresetLayers = async () => {
       // Create a layer that shows a checkerboard pattern to indicate transparency.
       const transparentImg = await createPatternImage(DOCUMENT_WIDTH, DOCUMENT_HEIGHT, transparentLayerImg)
-      const l = contentLayerManager.createCanvasLayer({
+      const transparentLayer = contentLayerManager.createCanvasLayer({
         width: DOCUMENT_WIDTH,
         height: DOCUMENT_HEIGHT
       })
-      l.drawImage(transparentImg, 0, 0)
-      l.setHistoryManager(historyManager)
+      transparentLayer.drawImage(transparentImg, 0, 0)
+      transparentLayer.setHistoryManager(historyManager)
 
       // The layer that is used as the background of the document.
       const backgroundLayer = contentLayerManager.createCanvasLayer({
@@ -450,10 +440,9 @@ const App = defineComponent({
       if (viewManager) {
         const { wx, wy } = viewManager.toWorld(event.offsetX, event.offsetY)
 
-        const shouldHandleDraw = toolRef.value === 'brush' &&
+        const shouldHandleDraw = isPaintToolSelected.value &&
           !isInColorPickerModeRef.value &&
-          currentStrokeLayer &&
-          currentStrokeLayer.hitTest(wx, wy)
+          currentStrokeLayer
 
         if (shouldHandleDraw) {
           currentStrokeLayer!.endStroke()
@@ -776,12 +765,10 @@ const App = defineComponent({
         <button
           class={style.undoRedoButton}
           onClick={handleUndo}
-          disabled={!canUndo.value}
         >Undo</button>
         <button
           class={style.undoRedoButton}
           onClick={handleRedo}
-          disabled={!canRedo.value}
         >Redo</button>
       </div>
     )
