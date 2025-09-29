@@ -1,7 +1,0 @@
-const useZoomTool = () => {
-
-}
-
-export {
-  useZoomTool
-}

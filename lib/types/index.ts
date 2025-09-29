@@ -6,4 +6,5 @@ export type {
   AnchorType,
   SpaceType,
   BlendMode
+
 }
