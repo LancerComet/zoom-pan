@@ -4,9 +4,8 @@
  * HotKeys:
  * B: Brush
  * E: Eraser
- * V: Move
+ * H: Pan
  * Alt: Color picker
- *
  * Hold Space to move canvas while using Brush or Eraser.
  * Just like Photoshop.
  */
@@ -259,6 +258,30 @@ const App = defineComponent({
     }
 
     const onPointerMove = (event: PointerEvent) => {
+      const shouldHandleDraw = view && !isInTempMoveMode && !isInColorPickerModeRef.value
+      if (shouldHandleDraw) {
+        const { wx, wy } = view!.toWorld(event.offsetX, event.offsetY)
+        const isBrush = toolRef.value === 'brush'
+        const isEraser = toolRef.value === 'eraser'
+        if (
+          (isBrush || isEraser) &&
+          event.buttons === 1 &&
+          currentStrokeLayer &&
+          currentStrokeLayer.visible &&
+          currentStrokeLayer.hitTest(wx, wy)
+        ) {
+          const brushSize = currentBrushSize.value
+          const pressure = event.pressure
+          const brushColor = brushColorRef.value
+          currentStrokeLayer.stroke(
+            wx, wy, brushColor, brushSize, pressure,
+            isEraser ? 'eraser' : 'brush'
+          )
+        }
+      }
+    }
+
+    const onPointerMoveRaw = (event: PointerEvent) => {
       const canvas = canvasRef.value
 
       if (canvas) {
@@ -285,29 +308,6 @@ const App = defineComponent({
       }
 
       if (view) {
-        const shouldHandleDraw = !isInTempMoveMode && !isInColorPickerModeRef.value
-        if (shouldHandleDraw) {
-          const { wx, wy } = view!.toWorld(event.offsetX, event.offsetY)
-          const isBrush = toolRef.value === 'brush'
-          const isEraser = toolRef.value === 'eraser'
-          if (
-            (isBrush || isEraser) &&
-            event.buttons === 1 &&
-            currentStrokeLayer &&
-            currentStrokeLayer.visible &&
-            currentStrokeLayer.hitTest(wx, wy)
-          ) {
-            const brushSize = currentBrushSize.value
-            const pressure = event.pressure
-            const brushColor = brushColorRef.value
-            currentStrokeLayer.stroke(
-              wx, wy, brushColor, brushSize, pressure,
-              isEraser ? 'eraser' : 'brush'
-            )
-          }
-          return
-        }
-
         const isMouseDown = (event.buttons ?? 0) > 0
         const shouldPickColor = isInColorPickerModeRef.value && isMouseDown
         if (shouldPickColor) {
@@ -454,7 +454,7 @@ const App = defineComponent({
         case 'b':
           selectPenTool()
           return
-        case 'v':
+        case 'h':
           selectPanTool()
           return
         case 'e':
@@ -600,7 +600,8 @@ const App = defineComponent({
           onPointerdown={onPointerDown}
           // eslint-disable-next-line @typescript-eslint/ban-ts-comment
           // @ts-expect-error
-          onPointerrawupdate={onPointerMove}
+          onPointerrawupdate={onPointerMoveRaw}
+          onPointermove={onPointerMove}
           onPointerup={onPointerUp}
         />
       </div>

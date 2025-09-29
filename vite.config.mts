@@ -5,8 +5,8 @@ export default function () {
   return defineConfig({
     plugins: [
       vueJsx({})
-
     ],
+
     css: {
       modules: {
         localsConvention: 'camelCaseOnly'
