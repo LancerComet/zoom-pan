@@ -16,7 +16,7 @@ interface ZoomPanOptions {
   background?: string | null // clear color; default '#fff'
   drawDocBorder?: boolean // draw 1px border around document
   minVisiblePx?: number // The min visible edge of the document in px when clamping pan. Default 30.
-  panClampMode?: PanClampMode // Set how to restrict the pan behavior. Default 'minVisible'
+  panClampMode?: PanClampMode // Set how to restrict the pan behavior. Only takes effect in document mode. Default 'minVisible'
 }
 
 class ZoomPan2D {
@@ -151,7 +151,7 @@ class ZoomPan2D {
     }
 
     // document pan clamp (after zoom/pan changes)
-    this._clampPan(zNow)
+    this._clampPanForDocMode(zNow)
 
     // --- D) 一帧只写一次矩阵并渲染 ---
     this.context.setTransform(1, 0, 0, 1, 0, 0)
@@ -360,7 +360,7 @@ class ZoomPan2D {
   }
 
   // ---------- Pan & Zoom ----------
-  private _clampPan (z: number) {
+  private _clampPanForDocMode (z: number) {
     if (!this._docEnabled) {
       return
     }
