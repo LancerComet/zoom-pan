@@ -12,7 +12,7 @@
  */
 
 import { computed, createApp, defineComponent, nextTick, onBeforeUnmount, onMounted, ref, withModifiers } from 'vue'
-import { ZoomPan2D, BrushCursor, LayerManager, BitmapLayer, CanvasLayer } from '../../lib'
+import { ZoomPan2D, BrushCursor, LayerManager, BitmapLayer, CanvasLayer, PanClampMode } from '../../lib'
 import colorpickerCursorImg from './assets/cursor-color-picker.png'
 import dragCursorImg from './assets/cursor-darg.png'
 import transparentLayerImg from './assets/transparent-layer.png'
@@ -40,6 +40,7 @@ const App = defineComponent({
     const toolRef = ref<ToolType>('pan')
     const brushSizeRef = ref(100)
     const eraserSizeRef = ref(50)
+    const panClampModeRef = ref<PanClampMode>('minVisible')
 
     let isInTempMoveMode = false
     const isInColorPickerModeRef = ref(false)
@@ -161,7 +162,8 @@ const App = defineComponent({
         {
           minZoom: 0.2,
           background: null,
-          drawDocBorder: true
+          drawDocBorder: true,
+          panClampMode: panClampModeRef.value
         }
       )
 
@@ -604,8 +606,27 @@ const App = defineComponent({
       </div>
     )
 
+    const PanModeSelector = () => (
+      <label class={style.panModeSelector}>
+        <span>Pan Mode:</span>
+        <select
+          value={panClampModeRef.value}
+          onInput={event => {
+            const value = (event.target as HTMLSelectElement).value as PanClampMode
+            console.log(value)
+            view?.setPanClampMode(value)
+            panClampModeRef.value = value
+          }}
+        >
+          <option value='margin'>Margin</option>
+          <option value='minVisible'>MinVisible</option>
+        </select>
+      </label>
+    )
+
     const Toolbar = () => (
       <div class={style.toolbar}>
+        <PanModeSelector />
         <ColorPicker />
         <ToolButtons />
         <BrushSizeSlider />

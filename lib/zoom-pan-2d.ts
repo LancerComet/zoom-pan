@@ -1,5 +1,7 @@
 type RenderFn = (view: ZoomPan2D) => void
 
+type PanClampMode = 'margin' | 'minVisible'
+
 interface ZoomPanOptions {
   minZoom?: number // default 0.5
   maxZoom?: number // default 10
@@ -13,6 +15,8 @@ interface ZoomPanOptions {
   autoResize?: boolean // default true (observes parent size)
   background?: string | null // clear color; default '#fff'
   drawDocBorder?: boolean // draw 1px border around document
+  minVisiblePx?: number // The min visible edge of the document in px when clamping pan. Default 30.
+  panClampMode?: PanClampMode // Set how to restrict the pan behavior. Default 'minVisible'
 }
 
 class ZoomPan2D {
@@ -71,6 +75,7 @@ class ZoomPan2D {
   // ---- Interaction toggles ----
   private _panEnabled = true
   private _zoomEnabled = true
+  private _panClampMode: PanClampMode = 'minVisible'
 
   // ---------- Document space ----------
   // 文档矩形（世界坐标），默认无边界（禁用）
@@ -360,41 +365,79 @@ class ZoomPan2D {
       return
     }
 
+    // 画布的 CSS 像素尺寸
     const W = this.canvas.width / this._dpr
     const H = this.canvas.height / this._dpr
-    const docL = this._docX
-    const docT = this._docY
-    const docR = this._docX + this._docW
-    const docB = this._docY + this._docH
 
-    // 约束条件：文档的屏幕映射需落在留白内
-    // 左边缘：z*docL + tx <= marginL
-    // 右边缘：z*docR + tx >= W - marginR
-    // 上边缘：z*docT + ty <= marginT
-    // 下边缘：z*docB + ty >= H - marginB
+    // 文档在“世界坐标”的边
+    const docLw = this._docX
+    const docTw = this._docY
+    const docRw = this._docX + this._docW
+    const docBw = this._docY + this._docH
 
-    const txMax = this._marginL - z * docL
-    const txMin = (W - this._marginR) - z * docR
-    const tyMax = this._marginT - z * docT
-    const tyMin = (H - this._marginB) - z * docB
+    if (this._panClampMode === 'margin') {
+      // 约束条件：文档的屏幕映射需落在留白内
+      // 左边缘：z*docL + tx <= marginL
+      // 右边缘：z*docR + tx >= W - marginR
+      // 上边缘：z*docT + ty <= marginT
+      // 下边缘：z*docB + ty >= H - marginB
 
-    // 文档比视口小的方向要“居中”
-    // 如果 z*docW <= availW，则锁定 tx 为居中值（不让它左右晃），同理 y。
-    const availW = Math.max(1, W - (this._marginL + this._marginR))
-    const availH = Math.max(1, H - (this._marginT + this._marginB))
+      const txMax = this._marginL - z * docLw
+      const txMin = (W - this._marginR) - z * docRw
+      const tyMax = this._marginT - z * docTw
+      const tyMin = (H - this._marginB) - z * docBw
 
-    if (z * this._docW <= availW) {
-      this._tx = this._marginL + (availW - z * this._docW) / 2 - z * this._docX
-    } else {
+      // 文档比视口小的方向要“居中”
+      // 如果 z*docW <= availW，则锁定 tx 为居中值（不让它左右晃），同理 y。
+      const availW = Math.max(1, W - (this._marginL + this._marginR))
+      const availH = Math.max(1, H - (this._marginT + this._marginB))
+
+      if (z * this._docW <= availW) {
+        this._tx = this._marginL + (availW - z * this._docW) / 2 - z * this._docX
+      } else {
+        // clamp
+        this._tx = Math.min(txMax, Math.max(txMin, this._tx))
+      }
+
+      if (z * this._docH <= availH) {
+        this._ty = this._marginT + (availH - z * this._docH) / 2 - z * this._docY
+      } else {
+        this._ty = Math.min(tyMax, Math.max(tyMin, this._ty))
+      }
+    } else if (this._panClampMode === 'minVisible') {
+      // 文档映射到屏幕后的尺寸（不含平移）
+      const docScreenW = z * this._docW
+      const docScreenH = z * this._docH
+
+      // 至少保留的可见边长（防止文档太小导致约束无解）
+      const minVisX = Math.min(this._options.minVisiblePx!, docScreenW)
+      const minVisY = Math.min(this._options.minVisiblePx!, docScreenH)
+
+      // 屏幕坐标下的文档边缘：sx = z*docL + tx,  ex = z*docR + tx
+      // 约束：至少留 minVisX 可见
+      // => 左边缘不能超过 (W - minVisX)： z*docL + tx <= W - minVisX  → tx <= (W - minVisX) - z*docL
+      //    右边缘不能小于 minVisX      ： z*docR + tx >= minVisX      → tx >= minVisX - z*docR
+      const txMax = (W - minVisX) - z * docLw
+      const txMin = (minVisX) - z * docRw
+
+      // 同理 Y
+      const tyMax = (H - minVisY) - z * docTw
+      const tyMin = (minVisY) - z * docBw
+
       // clamp
-      this._tx = Math.min(txMax, Math.max(txMin, this._tx))
-    }
+      // 若文档特别小，可能 txMin > txMax，此时把 tx 限到中点即可（等价于“尽力满足”）
+      this._tx = (txMin <= txMax)
+        ? Math.min(txMax, Math.max(txMin, this._tx))
+        : (txMin + txMax) / 2
 
-    if (z * this._docH <= availH) {
-      this._ty = this._marginT + (availH - z * this._docH) / 2 - z * this._docY
-    } else {
-      this._ty = Math.min(tyMax, Math.max(tyMin, this._ty))
+      this._ty = (tyMin <= tyMax)
+        ? Math.min(tyMax, Math.max(tyMin, this._ty))
+        : (tyMin + tyMax) / 2
     }
+  }
+
+  setPanClampMode (mode: PanClampMode) {
+    this._panClampMode = mode
   }
 
   isPanEnabled () {
@@ -613,7 +656,13 @@ class ZoomPan2D {
       autoResize: true,
       background: '#fff',
       drawDocBorder: false,
+      minVisiblePx: 30,
+      panClampMode: 'minVisible',
       ...options
+    }
+
+    if (this._options.minVisiblePx > canvas.width) {
+      this._options.minVisiblePx = Math.max(canvas.width - 5, 0)
     }
 
     this.LOG_MIN = Math.log(this._options.minZoom)
@@ -643,5 +692,6 @@ export {
 }
 
 export type {
+  PanClampMode,
   ZoomPanOptions
 }
