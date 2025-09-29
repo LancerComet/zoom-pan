@@ -2,7 +2,7 @@ import { AnchorType, SpaceType } from '../types'
 import { loadImage } from '../utils'
 import { CanvasLayer } from './layer.canvas.ts'
 
-interface ICreateImageLayerOption {
+interface ICreateBitmapLayerOptions {
   src: string | File | Blob
   width?: number
   height?: number
@@ -23,13 +23,7 @@ class BitmapLayer extends CanvasLayer {
   #urlToRevoke: string | null = null
 
   /** 从图片源创建位图层（会把像素绘入离屏） */
-  static async fromImage (
-    options: Omit<ICreateImageLayerOption, 'scale'|'rotation'|'anchor'> & {
-      scale?: number
-      rotation?: number
-      anchor?: AnchorType
-    }
-  ): Promise<BitmapLayer> {
+  static async fromImage (options: ICreateBitmapLayerOptions): Promise<BitmapLayer> {
     const img = await loadImage(options.src, options.crossOrigin)
     const distWidth = options.width ?? img.naturalWidth
     const distHeight = options.height ?? img.naturalHeight
@@ -105,14 +99,15 @@ class BitmapLayer extends CanvasLayer {
   }
 
   private constructor (options: {
+    width: number
+    height: number
     name?: string
     space?: SpaceType
     x?: number
     y?: number
-    scale?: number; rotation?: number
+    scale?: number;
+    rotation?: number
     anchor?: AnchorType
-    width: number
-    height: number
   }) {
     super({
       name: options.name,
@@ -134,5 +129,5 @@ export {
 }
 
 export type {
-  ICreateImageLayerOption
+  ICreateBitmapLayerOptions
 }

@@ -1,0 +1,7 @@
+const useZoomTool = () => {
+
+}
+
+export {
+  useZoomTool
+}

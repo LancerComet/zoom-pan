@@ -1,4 +1,4 @@
-import type { ZoomPan2D } from '../core/zoom-pan-2d.ts'
+import type { ViewManager } from '../core/view-manager.ts'
 import { BlendMode, SpaceType } from '../types'
 
 let __LAYER_SEQ = 0
@@ -12,9 +12,9 @@ abstract class LayerBase {
   opacity: number = 1
   blend: BlendMode = 'source-over'
 
-  abstract render (context: CanvasRenderingContext2D, view: ZoomPan2D): void
+  abstract render (context: CanvasRenderingContext2D, view: ViewManager): void
   abstract destroy (): void
-  abstract hitTest (x: number, y: number, view?: ZoomPan2D): boolean
+  abstract hitTest (x: number, y: number, view?: ViewManager): boolean
 
   protected constructor (name: string, type: string, space: SpaceType = 'world') {
     this.name = name

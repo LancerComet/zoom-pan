@@ -1,4 +1,4 @@
-import { ZoomPan2D } from '../core/zoom-pan-2d.ts'
+import { ViewManager } from '../core/view-manager.ts'
 import { LayerManagerBase } from './layer-manager.base.ts'
 
 /**
@@ -9,7 +9,7 @@ class TopScreenLayerManager extends LayerManagerBase {
   /**
    * Render all layers in target view.
    */
-  renderAllLayersIn (view: ZoomPan2D) {
+  renderAllLayersIn (view: ViewManager) {
     const context = view.topScreenContext
     this._renderAllLayersIn(view, context)
   }

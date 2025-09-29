@@ -1,10 +1,10 @@
 import { clamp } from '../utils'
 
-type RenderFn = (view: ZoomPan2D) => void
+type RenderFn = (view: ViewManager) => void
 
 type PanClampMode = 'margin' | 'minVisible'
 
-interface ZoomPanOptions {
+interface ViewManagerOption {
   minZoom?: number // default 0.5
   maxZoom?: number // default 10
   wheelSensitivity?: number // default 0.0015  (pixel -> log step multiplier)
@@ -21,7 +21,7 @@ interface ZoomPanOptions {
   panClampMode?: PanClampMode // Set how to restrict the pan behavior. Only takes effect in document mode. Default 'minVisible'
 }
 
-class ZoomPan2D {
+class ViewManager {
   readonly canvas: HTMLCanvasElement
   readonly context: CanvasRenderingContext2D
 
@@ -32,10 +32,13 @@ class ZoomPan2D {
   readonly topScreenContext: CanvasRenderingContext2D
 
   private readonly _render: RenderFn
-  private readonly _options: Required<ZoomPanOptions>
+  private readonly _options: Required<ViewManagerOption>
   private readonly _resizeObserver?: ResizeObserver
 
   private _isResetting = false
+
+  private _isResizing = false
+  private _resizeReleaseTimer: number | undefined
 
   private _raf = 0
   private _lastFrameTs = performance.now()
@@ -223,6 +226,11 @@ class ZoomPan2D {
   }
 
   private _loop () {
+    if (this._isResizing) {
+      this._raf = requestAnimationFrame(() => this._loop())
+      return
+    }
+
     const now = performance.now()
     const dt = Math.max(1, now - this._lastFrameTs)
     this._lastFrameTs = now
@@ -768,6 +776,8 @@ class ZoomPan2D {
 
   /** Resize canvas to match parent size and DPR */
   resizeToParent () {
+    this._isResizing = true
+
     const parent = this.canvas.parentElement || this.canvas
     const rect = parent.getBoundingClientRect()
     this._dpr = Math.max(1, window.devicePixelRatio || 1)
@@ -782,6 +792,11 @@ class ZoomPan2D {
 
     this._ensureOffscreenSizeLike(this.contentCanvas, this.canvas)
     this._ensureOffscreenSizeLike(this.topScreenCanvas, this.canvas)
+
+    clearTimeout(this._resizeReleaseTimer)
+    this._resizeReleaseTimer = window.setTimeout(() => {
+      this._isResizing = false
+    }, 50)
   }
 
   /** Destroy and cleanup */
@@ -799,7 +814,7 @@ class ZoomPan2D {
   constructor (
     canvas: HTMLCanvasElement,
     render: RenderFn,
-    options?: ZoomPanOptions
+    options?: ViewManagerOption
   ) {
     const context = canvas.getContext('2d', {
       willReadFrequently: true,
@@ -875,10 +890,10 @@ class ZoomPan2D {
 }
 
 export {
-  ZoomPan2D
+  ViewManager
 }
 
 export type {
   PanClampMode,
-  ZoomPanOptions
+  ViewManagerOption
 }

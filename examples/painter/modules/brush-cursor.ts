@@ -1,4 +1,4 @@
-import { ZoomPan2D, LayerBase } from '../../../lib'
+import { ViewManager, LayerBase } from '../../../lib'
 
 class BrushCursor extends LayerBase {
   /**
@@ -50,7 +50,7 @@ class BrushCursor extends LayerBase {
     return false
   }
 
-  render (context: CanvasRenderingContext2D, view: ZoomPan2D) {
+  render (context: CanvasRenderingContext2D, view: ViewManager) {
     if (!this.visible) {
       return
     }

@@ -1,7 +1,7 @@
-import { ZoomPan2D } from '../core/zoom-pan-2d.ts'
+import { ViewManager } from '../core/view-manager.ts'
 import { SpaceType } from '../types'
 import { LayerBase } from './layer.base.ts'
-import { BitmapLayer, ICreateImageLayerOption } from './layer.bitmap.ts'
+import { BitmapLayer, ICreateBitmapLayerOptions } from './layer.bitmap.ts'
 import { CanvasLayer, ICreateCanvasLayerOption } from './layer.canvas.ts'
 
 class LayerManagerBase {
@@ -11,24 +11,32 @@ class LayerManagerBase {
   /**
    * Render all layers in target view.
    */
-  protected _renderAllLayersIn (view: ZoomPan2D, context: CanvasRenderingContext2D) {
-    // 1) TopScreen 的 world 层（盖在内容之上，但随世界缩放）
+  protected _renderAllLayersIn (view: ViewManager, context: CanvasRenderingContext2D) {
+    // --- WORLD stack ---
+    context.save()
+    view.applyWorldTransform(context) // 只设一次基准矩阵
     for (const l of this._worldLayers) {
-      if (!l.visible || l.opacity <= 0) continue
+      if (!l.visible || l.opacity <= 0) {
+        continue
+      }
       context.save()
-      view.applyWorldTransform(context) // ← DPR × (zoom, pan)
       l.render(context, view)
       context.restore()
     }
+    context.restore()
 
-    // 2) TopScreen 的 screen 层（HUD/光标等，固定像素）
+    // --- SCREEN stack ---
+    context.save()
+    view.applyScreenTransform(context) // 只设一次基准矩阵
     for (const l of this._screenLayers) {
-      if (!l.visible || l.opacity <= 0) continue
+      if (!l.visible || l.opacity <= 0) {
+        continue
+      }
       context.save()
-      view.applyScreenTransform(context) // ← 只有 DPR
       l.render(context, view)
       context.restore()
     }
+    context.restore()
   }
 
   addLayer (layer: LayerBase, insertAt?: number): string {
@@ -45,7 +53,7 @@ class LayerManagerBase {
     return layer.id
   }
 
-  async createImageLayer (option: ICreateImageLayerOption): Promise<BitmapLayer> {
+  async createImageLayer (option: ICreateBitmapLayerOptions): Promise<BitmapLayer> {
     const layer = await BitmapLayer.fromImage(option)
     this.addLayer(layer)
     return layer

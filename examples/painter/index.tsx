@@ -5,16 +5,20 @@
  * B: Brush
  * E: Eraser
  * H: Pan
+ * Z: Zoom
  * Alt: Color picker
  * Hold Space to move canvas while using Brush or Eraser.
  * Just like Photoshop.
  */
 
-import { computed, createApp, defineComponent, nextTick, onBeforeUnmount, onMounted, ref, withModifiers } from 'vue'
-import { BitmapLayer, CanvasLayer, ContentLayerManager, PanClampMode, ZoomPan2D } from '../../lib'
+import {
+  computed, createApp,
+  defineAsyncComponent, defineComponent, nextTick, onBeforeUnmount, onMounted, ref, Suspense, withModifiers
+} from 'vue'
+import { BitmapLayer, CanvasLayer, ContentLayerManager, PanClampMode, ViewManager } from '../../lib'
 import { TopScreenLayerManager } from '../../lib/layer/layer-manager.top-screen.ts'
 import colorpickerCursorImg from './assets/cursor-color-picker.png'
-import dragCursorImg from './assets/cursor-darg.png'
+import panCursorImg from './assets/cursor-pan.png'
 import transparentLayerImg from './assets/transparent-layer.png'
 import style from './index.module.styl'
 
@@ -33,7 +37,7 @@ type ToolType = 'pan' | 'brush' | 'eraser' | 'zoom'
 const App = defineComponent({
   name: 'App',
 
-  setup () {
+  async setup () {
     const canvasRef = ref<HTMLCanvasElement | null>(null)
     const brushColorRef = ref<string>('#000000')
 
@@ -47,11 +51,26 @@ const App = defineComponent({
     const isInTempMoveModeRef = ref(false)
     const isInColorPickerModeRef = ref(false)
 
+    onMounted(async () => {
+      initViewManager()
+      await initPresetLayers()
+    })
+
+    onBeforeUnmount(() => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onWindowBlur)
+      layerListRef.value = []
+      contentLayerManager.destroy()
+      viewManager?.destroy()
+      viewManager = null
+    })
+
     // The layer that is currently being drawn (stroked) on.
     let currentStrokeLayer: CanvasLayer | null = null
 
     // The ZoomPan2D instance that manages the view (canvas).
-    let view: ZoomPan2D | null = null
+    let viewManager: ViewManager | null = null
 
     // LayerManager is used to manage all layers and render them in the view.
     // - Content layer manager: Put your bitmap content to this manager.
@@ -59,46 +78,67 @@ const App = defineComponent({
     const contentLayerManager = new ContentLayerManager()
     const topScreenLayerManager = new TopScreenLayerManager()
 
-    // This cursor layer acts as a drag cursor in the stage.
+    // This cursor layer acts as a pan cursor in the stage.
     // When people use the pen / eraser tool while holding the space key, it appears.
     // It is drawn in screen space, so its size is fixed and not affected by zoom.
-    let dragCursor: BitmapLayer | null = null
+    const panCursor = await topScreenLayerManager.createImageLayer({
+      width: 32,
+      height: 32,
+      src: panCursorImg,
+      space: 'screen',
+      anchor: 'center'
+    })
+    panCursor.visible = false
 
     // A brush cursor layer that shows the brush cursor in the stage.
     // It is drawn in world space, so its size is affected by zoom.
-    let brushCursor: BrushCursor | null = null
+    const brushCursor = new BrushCursor()
+    brushCursor.radius = brushSizeRef.value / 2
+    brushCursor.visible = false
+    topScreenLayerManager.addLayer(brushCursor)
 
     // The color picker cursor appears when user is picking a color.
-    let colorPickerCursor: BitmapLayer | null = null
+    const colorPickerCursor = await BitmapLayer.fromImage({
+      width: 64,
+      height: 64,
+      src: colorpickerCursorImg,
+      space: 'screen',
+      anchor: 'center'
+    })
+    colorPickerCursor.visible = false
+    topScreenLayerManager.addLayer(colorPickerCursor)
 
-    let colorPreviewLayer: CanvasLayer | null = null
+    // A small rectangle that shows the current brush color.
+    const colorPreviewLayer = topScreenLayerManager.createCanvasLayer({
+      width: 40,
+      height: 25,
+      space: 'screen',
+      redraw: (context, canvas) => {
+        context.fillStyle = brushColorRef.value
+        context.fillRect(0, 0, canvas.width, canvas.height)
+
+        context.strokeStyle = '#000000'
+        context.strokeRect(0, 0, canvas.width, canvas.height)
+
+        context.strokeStyle = '#ffffff'
+        context.strokeRect(1, 1, canvas.width - 2, canvas.height - 2)
+      }
+    })
+    colorPreviewLayer.visible = false
 
     const isPaintToolSelected = computed(() => {
       return toolRef.value === 'brush' || toolRef.value === 'eraser'
     })
 
     const currentBrushSize = computed(() => {
-      if (toolRef.value === 'eraser') {
-        return eraserSizeRef.value
-      }
-      return brushSizeRef.value
+      return toolRef.value === 'eraser'
+        ? eraserSizeRef.value
+        : brushSizeRef.value
     })
 
     const shouldHideBrowserCursor = computed(() => {
       return isPaintToolSelected.value || isInColorPickerModeRef.value || isInTempMoveModeRef.value
     })
-
-    const setDragCursorVisibility = (isVisible: boolean) => {
-      if (dragCursor) {
-        dragCursor.visible = isVisible
-      }
-    }
-
-    const setBrushVisibility = (isVisible: boolean) => {
-      if (brushCursor) {
-        brushCursor.visible = isVisible
-      }
-    }
 
     const addToLayerList = (layer: CanvasLayer, insertAt?: number) => {
       if (insertAt !== undefined && insertAt > -1) {
@@ -142,43 +182,56 @@ const App = defineComponent({
     }
 
     const selectPanTool = () => {
-      view?.setPanEnabled(true)
-      setBrushVisibility(false)
+      viewManager?.setPanEnabled(true)
+      setBrushCursorVisibility(false)
       toolRef.value = 'pan'
     }
 
     const selectBrushTool = () => {
-      view?.setPanEnabled(false)
-      if (brushCursor) {
-        brushCursor.radius = brushSizeRef.value / 2
-      }
-      setBrushVisibility(true)
+      viewManager?.setPanEnabled(false)
+      brushCursor.radius = brushSizeRef.value / 2
+      setBrushCursorVisibility(true)
       toolRef.value = 'brush'
     }
 
     const selectEraserTool = () => {
-      view?.setPanEnabled(false)
+      viewManager?.setPanEnabled(false)
+      brushCursor.radius = eraserSizeRef.value / 2
+      setBrushCursorVisibility(true)
       toolRef.value = 'eraser'
-      if (brushCursor) {
-        brushCursor.radius = eraserSizeRef.value / 2
-      }
-      setBrushVisibility(true)
     }
 
     const selectZoomTool = () => {
+      viewManager?.setPanEnabled(false)
+      setBrushCursorVisibility(false)
       toolRef.value = 'zoom'
-      setBrushVisibility(false)
-      view?.setPanEnabled(false)
     }
 
-    const initView = () => {
+    const setBrushColor = (color: string) => {
+      brushColorRef.value = color
+      colorPreviewLayer?.requestRedraw()
+    }
+
+    const setPanCursorVisibility = (isVisible: boolean) => {
+      panCursor.visible = isVisible
+    }
+
+    const setBrushCursorVisibility = (isVisible: boolean) => {
+      brushCursor.visible = isVisible
+    }
+
+    const setColorPickerCursorVisibility = (isVisible: boolean) => {
+      colorPickerCursor.visible = isVisible
+    }
+
+    const initViewManager = () => {
       const canvas = canvasRef.value
       if (!canvas) {
         return
       }
 
       // View initialization.
-      view = new ZoomPan2D(
+      viewManager = new ViewManager(
         canvas,
         view => {
           contentLayerManager.renderAllLayersIn(view)
@@ -193,8 +246,8 @@ const App = defineComponent({
       )
 
       // Set initial document size and screen margins.
-      view.setDocumentRect(0, 0, DOCUMENT_WIDTH, DOCUMENT_HEIGHT)
-      view.setDocumentMargins({
+      viewManager.setDocumentRect(0, 0, DOCUMENT_WIDTH, DOCUMENT_HEIGHT)
+      viewManager.setDocumentMargins({
         left: 50,
         right: 50,
         top: 50,
@@ -202,7 +255,7 @@ const App = defineComponent({
       })
 
       // Fit the whole document to view.
-      view.zoomDocumentToFit('contain')
+      viewManager.zoomDocumentToFit('contain')
     }
 
     const initPresetLayers = async () => {
@@ -249,64 +302,16 @@ const App = defineComponent({
       })
       paletteLayer.drawImage(paletteImg, 50, 50)
       addToLayerList(paletteLayer)
-
-      // The drag cursor is drawn in screen space, so it size is fixed and not affected by zoom.
-      dragCursor = await topScreenLayerManager.createImageLayer({
-        width: 32,
-        height: 32,
-        src: dragCursorImg,
-        space: 'screen',
-        anchor: 'center'
-      })
-      dragCursor.visible = false
-
-      // Create a brush cursor layer.
-      // The brush cursor is drawn in world space, so its size is affected by zoom.
-      brushCursor = new BrushCursor()
-      brushCursor.radius = brushSizeRef.value / 2
-      setBrushVisibility(false)
-      topScreenLayerManager.addLayer(brushCursor)
-
-      // Create a color picker cursor layer.
-      colorPickerCursor = await BitmapLayer.fromImage({
-        width: 64,
-        height: 64,
-        src: colorpickerCursorImg,
-        space: 'screen',
-        anchor: 'center'
-      })
-      colorPickerCursor.visible = false
-      topScreenLayerManager.addLayer(colorPickerCursor)
-
-      colorPreviewLayer = topScreenLayerManager.createCanvasLayer({
-        width: 40,
-        height: 25,
-        space: 'screen',
-        redraw: (context, canvas) => {
-          context.fillStyle = brushColorRef.value
-          context.fillRect(0, 0, canvas.width, canvas.height)
-
-          context.strokeStyle = '#000000'
-          context.strokeRect(0, 0, canvas.width, canvas.height)
-
-          context.strokeStyle = '#ffffff'
-          context.strokeRect(1, 1, canvas.width - 2, canvas.height - 2)
-        }
-      })
-      colorPreviewLayer.visible = false
     }
 
-    const setBrushColor = (color: string) => {
-      brushColorRef.value = color
-      colorPreviewLayer?.requestRedraw()
+    const zoomStartPoint = {
+      x: 0, y: 0
     }
-
-    const zoomStartPoint = { x: 0, y: 0 }
     let zoomStartZoom = 0
     let isPointerDown = false
 
     const onPointerDown = (event: PointerEvent) => {
-      if (!view) {
+      if (!viewManager) {
         return
       }
 
@@ -316,13 +321,13 @@ const App = defineComponent({
       if (shouldHandleZoom) {
         zoomStartPoint.x = event.offsetX
         zoomStartPoint.y = event.offsetY
-        zoomStartZoom = view.zoom
+        zoomStartZoom = viewManager.zoom
         return
       }
 
       const shouldHandleDraw = !isInTempMoveModeRef.value && !isInColorPickerModeRef.value
       if (shouldHandleDraw) {
-        const { wx, wy } = view!.toWorld(event.offsetX, event.offsetY)
+        const { wx, wy } = viewManager!.toWorld(event.offsetX, event.offsetY)
         const currentLayer = contentLayerManager.getLayer(selectedLayerIdRef.value)
         if (
           currentLayer instanceof CanvasLayer &&
@@ -336,8 +341,8 @@ const App = defineComponent({
 
       const shouldPickColor = isInColorPickerModeRef.value
       if (shouldPickColor && colorPreviewLayer) {
-        const { wx, wy } = view.toWorld(event.offsetX, event.offsetY)
-        setBrushColor(view.getPixelColorAtWorld(wx, wy).hex)
+        const { wx, wy } = viewManager.toWorld(event.offsetX, event.offsetY)
+        setBrushColor(viewManager.getPixelColorAtWorld(wx, wy).hex)
         colorPreviewLayer.visible = true
         colorPreviewLayer.requestRedraw()
       }
@@ -351,13 +356,11 @@ const App = defineComponent({
 
       const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e]
       for (const event of events) {
-        const shouldHandleDraw = view && !isInTempMoveModeRef.value && !isInColorPickerModeRef.value
+        const shouldHandleDraw = viewManager && !isInTempMoveModeRef.value && !isInColorPickerModeRef.value
         if (shouldHandleDraw) {
-          const { wx, wy } = view!.toWorld(event.offsetX, event.offsetY)
-          const isBrush = toolRef.value === 'brush'
-          const isEraser = toolRef.value === 'eraser'
+          const { wx, wy } = viewManager!.toWorld(event.offsetX, event.offsetY)
           if (
-            (isBrush || isEraser) &&
+            isPaintToolSelected.value &&
             event.buttons === 1 &&
             currentStrokeLayer &&
             currentStrokeLayer.visible &&
@@ -366,6 +369,7 @@ const App = defineComponent({
             const brushSize = currentBrushSize.value
             const pressure = event.pressure
             const brushColor = brushColorRef.value
+            const isEraser = toolRef.value === 'eraser'
             currentStrokeLayer.stroke(
               wx, wy, brushColor, brushSize, pressure,
               isEraser ? 'eraser' : 'brush'
@@ -383,7 +387,7 @@ const App = defineComponent({
       if (isZoomTool && isPointerDown && !isInTempMoveModeRef.value && !isInColorPickerModeRef.value) {
         const dx = event.offsetX - zoomStartPoint.x
         const targetZoom = zoomStartZoom + dx * 0.01
-        view?.zoomToAtScreen(zoomStartPoint.x, zoomStartPoint.y, targetZoom)
+        viewManager?.zoomToAtScreen(zoomStartPoint.x, zoomStartPoint.y, targetZoom)
         return
       }
 
@@ -393,42 +397,34 @@ const App = defineComponent({
         const cx = clientX - rect.left
         const cy = clientY - rect.top
 
-        if (dragCursor) {
-          dragCursor.x = cx
-          dragCursor.y = cy
-        }
+        panCursor.x = cx
+        panCursor.y = cy
 
-        if (colorPreviewLayer) {
-          colorPreviewLayer.x = cx + 30
-          colorPreviewLayer.y = cy - 40
-        }
+        colorPreviewLayer.x = cx + 30
+        colorPreviewLayer.y = cy - 40
 
         // Assign screen position to the brush cursor.
         // It will be converted to world position in the BrushCursor.render() method.
-        if (brushCursor) {
-          brushCursor.screenX = cx
-          brushCursor.screenY = cy
-        }
+        brushCursor.screenX = cx
+        brushCursor.screenY = cy
 
-        if (colorPickerCursor) {
-          colorPickerCursor.x = cx
-          colorPickerCursor.y = cy
-        }
+        colorPickerCursor.x = cx
+        colorPickerCursor.y = cy
       }
 
       const isMouseDown = (event.buttons ?? 0) > 0
       const shouldPickColor = isInColorPickerModeRef.value && isMouseDown
-      if (view && shouldPickColor) {
-        const { wx, wy } = view.toWorld(event.offsetX, event.offsetY)
-        setBrushColor(view.getPixelColorAtWorld(wx, wy).hex)
+      if (viewManager && shouldPickColor) {
+        const { wx, wy } = viewManager.toWorld(event.offsetX, event.offsetY)
+        setBrushColor(viewManager.getPixelColorAtWorld(wx, wy).hex)
       }
     }
 
     const onPointerUp = (event: PointerEvent) => {
       isPointerDown = false
 
-      if (view) {
-        const { wx, wy } = view.toWorld(event.offsetX, event.offsetY)
+      if (viewManager) {
+        const { wx, wy } = viewManager.toWorld(event.offsetX, event.offsetY)
 
         const shouldHandleDraw = toolRef.value === 'brush' &&
           !isInColorPickerModeRef.value &&
@@ -442,13 +438,11 @@ const App = defineComponent({
 
         const shouldPickColor = isInColorPickerModeRef.value
         if (shouldPickColor) {
-          setBrushColor(view.getPixelColorAtWorld(wx, wy).hex)
+          setBrushColor(viewManager.getPixelColorAtWorld(wx, wy).hex)
         }
       }
 
-      if (colorPreviewLayer) {
-        colorPreviewLayer.visible = false
-      }
+      colorPreviewLayer.visible = false
     }
 
     /**
@@ -458,49 +452,37 @@ const App = defineComponent({
      * It behaves the same way as Photoshop.
      */
     const enterTempMoveMode = () => {
-      if (dragCursor) {
-        dragCursor.visible = true
-      }
-      setBrushVisibility(false)
-      view?.setPanEnabled(true)
+      setPanCursorVisibility(true)
+      setBrushCursorVisibility(false)
+      viewManager?.setPanEnabled(true)
       isInTempMoveModeRef.value = true
     }
 
     const leaveTempMoveMode = () => {
-      if (dragCursor) {
-        dragCursor.visible = false
-      }
+      setPanCursorVisibility(false)
 
       if (isPaintToolSelected.value) {
-        setBrushVisibility(true)
-        view?.setPanEnabled(false)
-      }
-
-      if (toolRef.value === 'zoom') {
-        view?.setPanEnabled(false)
+        setBrushCursorVisibility(true)
+        viewManager?.setPanEnabled(false)
+      } else if (toolRef.value === 'zoom') {
+        viewManager?.setPanEnabled(false)
       }
 
       isInTempMoveModeRef.value = false
     }
 
     const enterColorPickerMode = () => {
-      if (colorPickerCursor) {
-        colorPickerCursor.visible = true
-      }
-      setBrushVisibility(false)
-      view?.setPanEnabled(false)
+      setColorPickerCursorVisibility(true)
+      setBrushCursorVisibility(false)
+      viewManager?.setPanEnabled(false)
       isInColorPickerModeRef.value = true
     }
 
     const leaveColorPickerMode = () => {
-      if (colorPickerCursor) {
-        colorPickerCursor.visible = false
-      }
-      if (colorPreviewLayer) {
-        colorPreviewLayer.visible = false
-      }
+      setColorPickerCursorVisibility(false)
+      colorPreviewLayer.visible = false
       if (isPaintToolSelected.value) {
-        setBrushVisibility(true)
+        setBrushCursorVisibility(true)
       }
       isInColorPickerModeRef.value = false
     }
@@ -554,7 +536,7 @@ const App = defineComponent({
         const is0 = event.key === '0' || event.code === 'Digit0'
         if (is0) {
           event.preventDefault()
-          view?.zoomDocumentToFit('contain')
+          viewManager?.zoomDocumentToFit('contain')
           return
         }
       }
@@ -599,21 +581,6 @@ const App = defineComponent({
     window.addEventListener('keyup', onKeyUp)
     window.addEventListener('blur', onWindowBlur)
 
-    onMounted(async () => {
-      initView()
-      await initPresetLayers()
-    })
-
-    onBeforeUnmount(() => {
-      window.removeEventListener('keydown', onKeyDown)
-      window.removeEventListener('keyup', onKeyUp)
-      window.removeEventListener('blur', onWindowBlur)
-      layerListRef.value = []
-      contentLayerManager.destroy()
-      view?.destroy()
-      view = null
-    })
-
     // This is a hacky way to append the canvas of each layer into the layer list item.
     const createSrc = (id: string, canvas: HTMLCanvasElement) => {
       nextTick(() => {
@@ -622,6 +589,7 @@ const App = defineComponent({
           div.appendChild(canvas)
         }
       })
+      return null
     }
 
     const LayerList = () => (
@@ -743,7 +711,7 @@ const App = defineComponent({
           onInput={event => {
             const value = (event.target as HTMLSelectElement).value as PanClampMode
             console.log(value)
-            view?.setPanClampMode(value)
+            viewManager?.setPanClampMode(value)
             panClampModeRef.value = value
           }}
         >
@@ -783,4 +751,15 @@ const App = defineComponent({
   }
 })
 
-createApp(App).mount('#app')
+const Root = defineComponent({
+  name: 'Root',
+  setup () {
+    return () => (
+      <Suspense>
+        <App />
+      </Suspense>
+    )
+  }
+})
+
+createApp(Root).mount('#app')

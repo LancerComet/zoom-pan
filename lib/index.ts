@@ -1,4 +1,4 @@
-export * from './core/zoom-pan-2d.ts'
+export * from './core/view-manager.ts'
 export * from './layer/layer.base.ts'
 export * from './layer/layer.bitmap.ts'
 export * from './layer/layer.canvas.ts'
