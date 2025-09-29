@@ -12,21 +12,22 @@ class LayerManagerBase {
    * Render all layers in target view.
    */
   protected _renderAllLayersIn (view: ZoomPan2D, context: CanvasRenderingContext2D) {
-    // world stack（ctx 已在 ZoomPan2D 中设置为世界矩阵）
+    // 1) TopScreen 的 world 层（盖在内容之上，但随世界缩放）
     for (const l of this._worldLayers) {
-      if (!l.visible || l.opacity <= 0) {
-        continue
-      }
+      if (!l.visible || l.opacity <= 0) continue
+      context.save()
+      view.applyWorldTransform(context) // ← DPR × (zoom, pan)
       l.render(context, view)
+      context.restore()
     }
 
-    // screen stack（切回单位矩阵）
-    context.setTransform(1, 0, 0, 1, 0, 0)
+    // 2) TopScreen 的 screen 层（HUD/光标等，固定像素）
     for (const l of this._screenLayers) {
-      if (!l.visible || l.opacity <= 0) {
-        continue
-      }
+      if (!l.visible || l.opacity <= 0) continue
+      context.save()
+      view.applyScreenTransform(context) // ← 只有 DPR
       l.render(context, view)
+      context.restore()
     }
   }
 

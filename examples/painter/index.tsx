@@ -262,7 +262,7 @@ const App = defineComponent({
       colorPickerCursor.visible = false
       topScreenLayerManager.addLayer(colorPickerCursor)
 
-      colorPreviewLayer = contentLayerManager.createCanvasLayer({
+      colorPreviewLayer = topScreenLayerManager.createCanvasLayer({
         width: 35,
         height: 20,
         space: 'screen',

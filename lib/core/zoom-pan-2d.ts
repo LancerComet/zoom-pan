@@ -35,8 +35,6 @@ class ZoomPan2D {
 
   private _isResetting = false
 
-  private _dpr = Math.max(1, window.devicePixelRatio || 1)
-
   private _raf = 0
   private _lastFrameTs = performance.now()
 
@@ -193,8 +191,6 @@ class ZoomPan2D {
     topScreenContext.clearRect(0, 0, topScreenCanvas.width, topScreenCanvas.height)
 
     contentContext.setTransform(this._dpr * zNow, 0, 0, this._dpr * zNow, this._dpr * this._tx, this._dpr * this._ty)
-    topScreenContext.setTransform(this._dpr * zNow, 0, 0, this._dpr * zNow, this._dpr * this._tx, this._dpr * this._ty)
-    // topScreenContext.setTransform(this._dpr, 0, 0, this._dpr, 0, 0)
 
     if (this._docEnabled) {
       // optional background around doc could be drawn here if you like
@@ -352,6 +348,22 @@ class ZoomPan2D {
     }
 
     this._targetLogZ = Math.min(this.LOG_MAX, Math.max(this.LOG_MIN, this._targetLogZ + step))
+  }
+
+  // -------- DRP --------
+  private _dpr = Math.max(1, window.devicePixelRatio || 1)
+
+  get dpr () {
+    return this._dpr
+  }
+
+  applyWorldTransform (ctx: CanvasRenderingContext2D) {
+    const z = Math.exp(this._currentLogZ)
+    ctx.setTransform(this._dpr * z, 0, 0, this._dpr * z, this._dpr * this._tx, this._dpr * this._ty)
+  }
+
+  applyScreenTransform (ctx: CanvasRenderingContext2D) {
+    ctx.setTransform(this._dpr, 0, 0, this._dpr, 0, 0) // 只有 DPR，没有 world 变换
   }
 
   // --------- Color ----------
