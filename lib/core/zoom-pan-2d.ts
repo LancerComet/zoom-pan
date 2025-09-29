@@ -1,3 +1,5 @@
+import { clamp } from '../utils'
+
 type RenderFn = (view: ZoomPan2D) => void
 
 type PanClampMode = 'margin' | 'minVisible'
@@ -38,12 +40,6 @@ class ZoomPan2D {
   private _raf = 0
   private _lastFrameTs = performance.now()
 
-  // Zoom state (log-space)
-  private _currentLogZ = Math.log(1)
-  private _targetLogZ = Math.log(1)
-  private LOG_MIN: number
-  private LOG_MAX: number
-
   // Pan state (in CSS px world coords)
   private _tx = 0
   private _ty = 0
@@ -58,10 +54,6 @@ class ZoomPan2D {
   private _vy = 0
   private _lastMoveTs = 0
 
-  private _onWheelBound = (e: WheelEvent) => {
-    this._onWheel(e)
-  }
-
   private _onDownBound = (e: PointerEvent) => {
     this._onPointerDown(e)
   }
@@ -72,6 +64,133 @@ class ZoomPan2D {
 
   private _onUpBound = () => {
     this._onPointerUp()
+  }
+
+  // --------- Zoom ----------
+  private _currentLogZ = Math.log(1)
+  private _targetLogZ = Math.log(1)
+  private LOG_MIN: number
+  private LOG_MAX: number
+
+  get zoom () {
+    return Math.exp(this._currentLogZ)
+  }
+
+  get minZoom () {
+    return this._options.minZoom
+  }
+
+  get maxZoom () {
+    return this._options.maxZoom
+  }
+
+  /**
+   * 将目标缩放（log 空间）钳制到范围内
+   */
+  private _clampLog (logZ: number) {
+    return clamp(logZ, this.LOG_MIN, this.LOG_MAX)
+  }
+
+  /**
+   * 设置“以屏幕点 (ax, ay) 为锚”的目标缩放（传入的是 log(zoom)），平滑过渡
+   */
+  private _setTargetLogZoomAtScreen (anchorX: number, anchorY: number, targetLogZ: number) {
+    if (!Number.isFinite(targetLogZ)) {
+      return
+    }
+    this._anchorX = anchorX
+    this._anchorY = anchorY
+    this._targetLogZ = this._clampLog(targetLogZ)
+  }
+
+  /**
+   * 在屏幕点 (ax, ay) 处，缩放至绝对倍数，平滑过渡
+   */
+  zoomToAtScreen (anchorX: number, anchorY: number, zoom: number) {
+    this._setTargetLogZoomAtScreen(anchorX, anchorY, Math.log(zoom))
+  }
+
+  /**
+   * 在屏幕点 (ax, ay) 处，立即缩放到绝对倍数，无动画
+   */
+  zoomToAtScreenRaw (anchorX: number, anchorY: number, zoom: number) {
+    // 1) 线性空间钳制 + 清洗
+    if (!Number.isFinite(zoom)) {
+      return
+    }
+    const minZ = Math.max(1e-8, this._options.minZoom) // minZoom 必须 > 0
+    const maxZ = this._options.maxZoom
+    const zTarget = clamp(zoom, minZ, maxZ)
+
+    // 2) 前后缩放
+    const zPrev = Math.exp(this._currentLogZ)
+    const zNow = zTarget
+
+    if (!Number.isFinite(zPrev) || zPrev <= 0) {
+      return
+    }
+
+    if (Math.abs(zNow - zPrev) < 1e-12) {
+      // 没变化，直接退出
+      return
+    }
+
+    // 3) 立即更新 log（避免 -Infinity/NaN）
+    const clampedLogZ = Math.log(zTarget)
+    this._currentLogZ = clampedLogZ
+    this._targetLogZ = clampedLogZ
+
+    // 4) 锚点补偿（使用 CSS px；tx/ty 就是 CSS px，不用乘 DPR）
+    const ratio = zNow / zPrev
+    this._tx = anchorX - (anchorX - this._tx) * ratio
+    this._ty = anchorY - (anchorY - this._ty) * ratio
+
+    // 5) 在“文档模式”下，缩放后要立刻约束平移，避免越界后再抖
+    this._clampPanForDocMode(zNow)
+  }
+
+  /**
+   * 在世界坐标点 (wx, wy) 处，缩放到目标倍数.
+   */
+  zoomToAtWorld (wx: number, wy: number, zoom: number) {
+    const { x, y } = this.toScreen(wx, wy)
+    this.zoomToAtScreen(x, y, zoom)
+  }
+
+  /**
+   * 在屏幕点 (ax, ay) 处，以乘法因子进行缩放（>1 放大，<1 缩小），平滑过渡
+   */
+  zoomByFactorAtScreen (anchorX: number, anchorY: number, factor: number) {
+    if (factor <= 0 || !Number.isFinite(factor)) {
+      return
+    }
+
+    const stepLog = Math.log(factor)
+    this._setTargetLogZoomAtScreen(anchorX, anchorY, this._targetLogZ + stepLog)
+  }
+
+  /**
+   * 在世界坐标 (wx, wy) 处，缩放（先换算到屏幕坐标再复用）.
+   */
+  zoomByFactorAtWorld (wx: number, wy: number, factor: number) {
+    const { x, y } = this.toScreen(wx, wy)
+    this.zoomByFactorAtScreen(x, y, factor)
+  }
+
+  zoomInAtCenter () {
+    const rect = this.canvas.getBoundingClientRect()
+    const cx = rect.width / 2
+    const cy = rect.height / 2
+    const zoomFactor = 1.2
+    this.zoomByFactorAtScreen(cx, cy, zoomFactor)
+  }
+
+  zoomOutAtCenter () {
+    const rect = this.canvas.getBoundingClientRect()
+    const cx = rect.width / 2
+    const cy = rect.height / 2
+    const zoomFactor = 1 / 1.2
+    this.zoomByFactorAtScreen(cx, cy, zoomFactor)
   }
 
   // ---- Interaction toggles ----
@@ -337,20 +456,25 @@ class ZoomPan2D {
     const dy = this._normalizeWheelDelta(e)
 
     const rect = this.canvas.getBoundingClientRect()
-    this._anchorX = e.clientX - rect.left
-    this._anchorY = e.clientY - rect.top
+    const ax = e.clientX - rect.left
+    const ay = e.clientY - rect.top
 
-    let step = -dy * this._options.wheelSensitivity
+    // 将“像素增量 → log 空间步进”
+    let stepLog = -dy * this._options.wheelSensitivity
     if (e.ctrlKey || e.metaKey) {
-      step *= 1.6
+      stepLog *= 1.6
     } else if (e.shiftKey) {
-      step *= 0.6
+      stepLog *= 0.6
     }
 
-    this._targetLogZ = Math.min(this.LOG_MAX, Math.max(this.LOG_MIN, this._targetLogZ + step))
+    this._setTargetLogZoomAtScreen(ax, ay, this._targetLogZ + stepLog)
   }
 
-  // -------- DRP --------
+  private _onWheelBound = (e: WheelEvent) => {
+    this._onWheel(e)
+  }
+
+  // -------- Dpr --------
   private _dpr = Math.max(1, window.devicePixelRatio || 1)
 
   get dpr () {

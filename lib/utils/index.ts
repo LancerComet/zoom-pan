@@ -16,6 +16,11 @@ const loadImage = async (src: string | File | Blob, crossOrigin?: '' | 'anonymou
   }
 })
 
+const clamp = (value: number, min: number, max: number) => {
+  return Math.min(Math.max(value, min), max)
+}
+
 export {
+  clamp,
   loadImage
 }
