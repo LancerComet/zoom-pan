@@ -7,19 +7,93 @@ interface StrokeCommandOptions {
   appliedFromLive?: boolean
 }
 
-/**
- * 笔画命令：记录一次完整的绘画操作
- */
+interface BoundingBox {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 class StrokeCommand extends BaseCommand {
   private readonly layer: CanvasLayer
   private strokeData: IStrokeData
   private previousImageData: ImageData | null
+  private boundingBox: BoundingBox | null
   private hasLiveApplied: boolean
   private isExecuted = false
 
+  private calculateBoundingBox (): BoundingBox | null {
+    const { points, size } = this.strokeData
+    if (points.length === 0) return null
+
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+
+    for (const point of points) {
+      const pressure = point.pressure ?? 1
+      const radius = (size * pressure) / 2
+      minX = Math.min(minX, point.x - radius)
+      minY = Math.min(minY, point.y - radius)
+      maxX = Math.max(maxX, point.x + radius)
+      maxY = Math.max(maxY, point.y + radius)
+    }
+
+    const padding = 2
+    const { canvas } = this.layer
+    const x = Math.max(0, Math.floor(minX - padding))
+    const y = Math.max(0, Math.floor(minY - padding))
+    const right = Math.min(canvas.width, Math.ceil(maxX + padding))
+    const bottom = Math.min(canvas.height, Math.ceil(maxY + padding))
+
+    const width = right - x
+    const height = bottom - y
+
+    if (width <= 0 || height <= 0) {
+      return null
+    }
+
+    return { x, y, width, height }
+  }
+
+  private fitSnapshotToBoundingBox (): void {
+    if (!this.previousImageData || !this.boundingBox) {
+      return
+    }
+
+    const { width, height } = this.boundingBox
+    if (this.previousImageData.width === width && this.previousImageData.height === height) {
+      return
+    }
+
+    const source = this.previousImageData
+    const cropped = new ImageData(width, height)
+    const srcData = source.data
+    const dstData = cropped.data
+    const sourceWidth = source.width
+    const rowStride = width * 4
+    const { x, y } = this.boundingBox
+
+    for (let row = 0; row < height; row++) {
+      const srcOffset = ((y + row) * sourceWidth + x) * 4
+      const dstOffset = row * rowStride
+      dstData.set(srcData.subarray(srcOffset, srcOffset + rowStride), dstOffset)
+    }
+
+    this.previousImageData = cropped
+  }
+
   private captureCurrentState (): ImageData | null {
     try {
-      const { canvas, context } = this.layer
+      const { context, canvas } = this.layer
+      if (!this.boundingBox) {
+        this.boundingBox = this.calculateBoundingBox()
+      }
+      if (this.boundingBox) {
+        const { x, y, width, height } = this.boundingBox
+        return context.getImageData(x, y, width, height)
+      }
       return context.getImageData(0, 0, canvas.width, canvas.height)
     } catch {
       return null
@@ -28,7 +102,9 @@ class StrokeCommand extends BaseCommand {
 
   private restorePreviousState (): void {
     const { context, canvas } = this.layer
-    if (this.previousImageData) {
+    if (this.previousImageData && this.boundingBox) {
+      context.putImageData(this.previousImageData, this.boundingBox.x, this.boundingBox.y)
+    } else if (this.previousImageData) {
       context.putImageData(this.previousImageData, 0, 0)
     } else {
       context.clearRect(0, 0, canvas.width, canvas.height)
@@ -84,10 +160,15 @@ class StrokeCommand extends BaseCommand {
   }
 
   execute (): void {
-    if (this.isExecuted) return
+    if (this.isExecuted) {
+      return
+    }
 
     if (!this.previousImageData) {
       this.previousImageData = this.captureCurrentState()
+      if (this.previousImageData && this.boundingBox) {
+        this.fitSnapshotToBoundingBox()
+      }
     }
 
     if (this.hasLiveApplied) {
@@ -100,35 +181,22 @@ class StrokeCommand extends BaseCommand {
   }
 
   undo (): void {
-    if (!this.isExecuted) return
+    if (!this.isExecuted) {
+      return
+    }
 
     this.restorePreviousState()
     this.isExecuted = false
   }
 
   canMerge (other: ICommand): boolean {
-    if (!(other instanceof StrokeCommand)) return false
-    if (other.layer.id !== this.layer.id) return false
-
-    const timeDiff = Math.abs(other.getTimestamp() - this.getTimestamp())
-    if (timeDiff > 100) {
-      return false
-    }
-
-    return (
-      other.strokeData.color === this.strokeData.color &&
-      other.strokeData.size === this.strokeData.size &&
-      other.strokeData.mode === this.strokeData.mode
-    )
+    return !!other && false
   }
 
   merge (other: ICommand): ICommand {
-    if (!(other instanceof StrokeCommand)) {
-      return other
+    if (other) {
+      // merging is intentionally disabled for stroke commands
     }
-
-    this.strokeData.points.push(...other.strokeData.points)
-    this.timestamp = other.getTimestamp()
     return this
   }
 
@@ -141,6 +209,11 @@ class StrokeCommand extends BaseCommand {
     }
     this.previousImageData = options?.snapshot ?? null
     this.hasLiveApplied = options?.appliedFromLive ?? false
+    this.boundingBox = this.calculateBoundingBox()
+
+    if (this.previousImageData && this.boundingBox) {
+      this.fitSnapshotToBoundingBox()
+    }
   }
 }
 
@@ -151,4 +224,3 @@ export {
 export type {
   StrokeCommandOptions
 }
-

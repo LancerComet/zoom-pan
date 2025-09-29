@@ -33,5 +33,6 @@ abstract class BaseCommand implements ICommand {
   }
 }
 
-export { BaseCommand }
-
+export {
+  BaseCommand
+}

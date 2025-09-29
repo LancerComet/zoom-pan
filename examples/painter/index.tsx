@@ -762,14 +762,8 @@ const App = defineComponent({
 
     const UndoRedoButtons = () => (
       <div class={style.undoRedoContainer}>
-        <button
-          class={style.undoRedoButton}
-          onClick={handleUndo}
-        >Undo</button>
-        <button
-          class={style.undoRedoButton}
-          onClick={handleRedo}
-        >Redo</button>
+        <button onClick={handleUndo}>Undo</button>
+        <button onClick={handleRedo}>Redo</button>
       </div>
     )
 
