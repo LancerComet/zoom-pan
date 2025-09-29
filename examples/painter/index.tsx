@@ -550,21 +550,21 @@ const App = defineComponent({
             toolRef.value === 'pan' ? style.selected : ''
           ]}
           onClick={selectPanTool}
-        >Pan</button>
+        >Pan (H)</button>
         <button
           class={[
             style.toolbarButton,
             toolRef.value === 'brush' ? style.selected : ''
           ]}
           onClick={selectPenTool}
-        >Brush</button>
+        >Brush (B)</button>
         <button
           class={[
             style.toolbarButton,
             toolRef.value === 'eraser' ? style.selected : ''
           ]}
           onClick={selectEraserTool}
-        >Eraser</button>
+        >Eraser (E)</button>
       </div>
     )
 
