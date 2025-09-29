@@ -1,5 +1,5 @@
-import { ZoomPan2D } from '../zoom-pan-2d'
-import { LayerBase } from './layer-kit'
+import { ZoomPan2D } from '../core/zoom-pan-2d.ts'
+import { LayerBase } from '../layer/layer.base.ts'
 
 class BrushCursor extends LayerBase {
   /**

@@ -16,7 +16,7 @@ import colorpickerCursorImg from './assets/cursor-color-picker.png'
 import dragCursorImg from './assets/cursor-darg.png'
 import transparentLayerImg from './assets/transparent-layer.png'
 import style from './index.module.styl'
-import { createPatternImage, loadImage } from './utils.ts'
+import { createPatternImage } from './utils.ts'
 
 // Document size, just like what in Photoshop.
 const DOCUMENT_WIDTH = 1200

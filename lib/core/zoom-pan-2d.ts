@@ -25,14 +25,12 @@ class ZoomPan2D {
 
   private readonly _render: RenderFn
   private readonly _options: Required<ZoomPanOptions>
-
-  private _dpr = Math.max(1, window.devicePixelRatio || 1)
-
-  private _resizeObserver?: ResizeObserver
+  private readonly _resizeObserver?: ResizeObserver
 
   private _isResetting = false
 
-  // RAF
+  private _dpr = Math.max(1, window.devicePixelRatio || 1)
+
   private _raf = 0
   private _lastFrameTs = performance.now()
 
