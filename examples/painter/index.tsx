@@ -305,26 +305,29 @@ const App = defineComponent({
       }
     }
 
-    const onPointerMoveRaw = (event: PointerEvent) => {
-      const shouldHandleDraw = view && !isInTempMoveMode && !isInColorPickerModeRef.value
-      if (shouldHandleDraw) {
-        const { wx, wy } = view!.toWorld(event.offsetX, event.offsetY)
-        const isBrush = toolRef.value === 'brush'
-        const isEraser = toolRef.value === 'eraser'
-        if (
-          (isBrush || isEraser) &&
-          event.buttons === 1 &&
-          currentStrokeLayer &&
-          currentStrokeLayer.visible &&
-          currentStrokeLayer.hitTest(wx, wy)
-        ) {
-          const brushSize = currentBrushSize.value
-          const pressure = event.pressure
-          const brushColor = brushColorRef.value
-          currentStrokeLayer.stroke(
-            wx, wy, brushColor, brushSize, pressure,
-            isEraser ? 'eraser' : 'brush'
-          )
+    const onPointerMoveRaw = (e: PointerEvent) => {
+      const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e]
+      for (const event of events) {
+        const shouldHandleDraw = view && !isInTempMoveMode && !isInColorPickerModeRef.value
+        if (shouldHandleDraw) {
+          const { wx, wy } = view!.toWorld(event.offsetX, event.offsetY)
+          const isBrush = toolRef.value === 'brush'
+          const isEraser = toolRef.value === 'eraser'
+          if (
+            (isBrush || isEraser) &&
+            event.buttons === 1 &&
+            currentStrokeLayer &&
+            currentStrokeLayer.visible &&
+            currentStrokeLayer.hitTest(wx, wy)
+          ) {
+            const brushSize = currentBrushSize.value
+            const pressure = event.pressure
+            const brushColor = brushColorRef.value
+            currentStrokeLayer.stroke(
+              wx, wy, brushColor, brushSize, pressure,
+              isEraser ? 'eraser' : 'brush'
+            )
+          }
         }
       }
     }
