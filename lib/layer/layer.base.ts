@@ -12,7 +12,7 @@ abstract class LayerBase {
   opacity: number = 1
   blend: BlendMode = 'source-over'
 
-  abstract render (view: ZoomPan2D): void
+  abstract render (context: CanvasRenderingContext2D, view: ZoomPan2D): void
   abstract destroy (): void
   abstract hitTest (x: number, y: number, view?: ZoomPan2D): boolean
 

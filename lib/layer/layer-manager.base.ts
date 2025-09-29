@@ -4,9 +4,31 @@ import { LayerBase } from './layer.base.ts'
 import { BitmapLayer, ICreateImageLayerOption } from './layer.bitmap.ts'
 import { CanvasLayer, ICreateCanvasLayerOption } from './layer.canvas.ts'
 
-class LayerManager {
-  private _worldLayers: LayerBase[] = []
-  private _screenLayers: LayerBase[] = []
+class LayerManagerBase {
+  protected _worldLayers: LayerBase[] = []
+  protected _screenLayers: LayerBase[] = []
+
+  /**
+   * Render all layers in target view.
+   */
+  protected _renderAllLayersIn (view: ZoomPan2D, context: CanvasRenderingContext2D) {
+    // world stack（ctx 已在 ZoomPan2D 中设置为世界矩阵）
+    for (const l of this._worldLayers) {
+      if (!l.visible || l.opacity <= 0) {
+        continue
+      }
+      l.render(context, view)
+    }
+
+    // screen stack（切回单位矩阵）
+    context.setTransform(1, 0, 0, 1, 0, 0)
+    for (const l of this._screenLayers) {
+      if (!l.visible || l.opacity <= 0) {
+        continue
+      }
+      l.render(context, view)
+    }
+  }
 
   addLayer (layer: LayerBase, insertAt?: number): string {
     const stack = layer.space === 'world'
@@ -62,29 +84,6 @@ class LayerManager {
   }
 
   /**
-   * Render all layers in target view.
-   */
-  renderAllLayersIn (view: ZoomPan2D) {
-    // world stack（ctx 已在 ZoomPan2D 中设置为世界矩阵）
-    for (const l of this._worldLayers) {
-      if (!l.visible || l.opacity <= 0) {
-        continue
-      }
-      l.render(view)
-    }
-
-    // screen stack（切回单位矩阵）
-    const context = view.context
-    context.setTransform(1, 0, 0, 1, 0, 0)
-    for (const l of this._screenLayers) {
-      if (!l.visible || l.opacity <= 0) {
-        continue
-      }
-      l.render(view)
-    }
-  }
-
-  /**
    * Hit test all layers (top-first).
    *
    * @param x
@@ -112,5 +111,5 @@ class LayerManager {
 }
 
 export {
-  LayerManager
+  LayerManagerBase
 }

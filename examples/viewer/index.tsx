@@ -1,5 +1,5 @@
 import { createApp, defineComponent, onBeforeUnmount, onMounted, ref } from 'vue'
-import { LayerManager, ZoomPan2D } from '../../lib'
+import { ContentLayerManager, ZoomPan2D } from '../../lib'
 import style from './index.module.styl'
 
 const App = defineComponent({
@@ -12,7 +12,7 @@ const App = defineComponent({
     let view: ZoomPan2D | null = null
 
     // LayerManager is used to manage all layers and render them in the view.
-    const layerManager = new LayerManager()
+    const layerManager = new ContentLayerManager()
 
     const initView = () => {
       const canvas = canvasRef.value

@@ -11,12 +11,15 @@
  */
 
 import { computed, createApp, defineComponent, nextTick, onBeforeUnmount, onMounted, ref, withModifiers } from 'vue'
-import { BitmapLayer, BrushCursor, CanvasLayer, LayerManager, PanClampMode, ZoomPan2D } from '../../lib'
+import { BitmapLayer, CanvasLayer, ContentLayerManager, PanClampMode, ZoomPan2D } from '../../lib'
+import { TopScreenLayerManager } from '../../lib/layer/layer-manager.top-screen.ts'
 import colorpickerCursorImg from './assets/cursor-color-picker.png'
 import dragCursorImg from './assets/cursor-darg.png'
 import transparentLayerImg from './assets/transparent-layer.png'
 import style from './index.module.styl'
-import { createPatternImage } from './utils.ts'
+
+import { BrushCursor } from './modules/brush-cursor.ts'
+import { createPatternImage, loadImage } from './utils.ts'
 
 // Document size, just like what in Photoshop.
 const DOCUMENT_WIDTH = 1200
@@ -51,7 +54,10 @@ const App = defineComponent({
     let view: ZoomPan2D | null = null
 
     // LayerManager is used to manage all layers and render them in the view.
-    const layerManager = new LayerManager()
+    // - Content layer manager: Put your bitmap content to this manager.
+    // - Top screen layer manager: Put your non bitmap content here, such as UI elements.
+    const contentLayerManager = new ContentLayerManager()
+    const topScreenLayerManager = new TopScreenLayerManager()
 
     // This cursor layer acts as a drag cursor in the stage.
     // When people use the pen / eraser tool while holding the space key, it appears.
@@ -98,9 +104,9 @@ const App = defineComponent({
       })
 
       {
-        const allLayer = layerManager.getAllLayers()
+        const allLayer = contentLayerManager.getAllLayers()
         const insertAt = allLayer.findIndex(l => l.id === selectedLayerIdRef.value)
-        layerManager.addLayer(layer, insertAt + 1)
+        contentLayerManager.addLayer(layer, insertAt + 1)
       }
 
       {
@@ -116,7 +122,7 @@ const App = defineComponent({
       if (index > -1) {
         layerListRef.value.splice(index, 1)
       }
-      layerManager.removeLayer(layerId)
+      contentLayerManager.removeLayer(layerId)
     }
 
     const selectLayer = (layerId: string) => {
@@ -159,7 +165,8 @@ const App = defineComponent({
       view = new ZoomPan2D(
         canvas,
         view => {
-          layerManager.renderAllLayersIn(view)
+          contentLayerManager.renderAllLayersIn(view)
+          topScreenLayerManager.renderAllLayersIn(view)
         },
         {
           minZoom: 0.2,
@@ -185,14 +192,14 @@ const App = defineComponent({
     const initPresetLayers = async () => {
       // Create a layer that shows a checkerboard pattern to indicate transparency.
       const transparentImg = await createPatternImage(DOCUMENT_WIDTH, DOCUMENT_HEIGHT, transparentLayerImg)
-      const l = layerManager.createCanvasLayer({
+      const l = contentLayerManager.createCanvasLayer({
         width: DOCUMENT_WIDTH,
         height: DOCUMENT_HEIGHT
       })
       l.drawImage(transparentImg, 0, 0)
 
       // The layer that is used as the background of the document.
-      const backgroundLayer = layerManager.createCanvasLayer({
+      const backgroundLayer = contentLayerManager.createCanvasLayer({
         name: 'Background',
         width: DOCUMENT_WIDTH,
         height: DOCUMENT_HEIGHT,
@@ -204,25 +211,31 @@ const App = defineComponent({
       addToLayerList(backgroundLayer)
 
       // Insert an image layer.
-      const lineArtLayer = await layerManager.createImageLayer({
+      const lineArtImage = await loadImage('/anime.png')
+      const lineArtLayer = contentLayerManager.createCanvasLayer({
         name: 'LineArt',
-        src: '/anime.png',
-        x: (DOCUMENT_WIDTH - 960) / 2,
-        y: (DOCUMENT_HEIGHT - 1776) / 2
+        width: DOCUMENT_WIDTH,
+        height: DOCUMENT_HEIGHT
       })
+      lineArtLayer.drawImage(
+        lineArtImage,
+        (DOCUMENT_WIDTH - lineArtImage.naturalWidth) / 2,
+        (DOCUMENT_HEIGHT - lineArtImage.naturalHeight) / 2
+      )
       addToLayerList(lineArtLayer)
       selectedLayerIdRef.value = lineArtLayer.id
 
-      const paletteLayer = await layerManager.createImageLayer({
+      const paletteImg = await loadImage('/palette.png')
+      const paletteLayer = contentLayerManager.createCanvasLayer({
         name: 'Palette',
-        src: '/palette.png',
-        x: 50,
-        y: 50
+        width: DOCUMENT_WIDTH,
+        height: DOCUMENT_HEIGHT
       })
+      paletteLayer.drawImage(paletteImg, 50, 50)
       addToLayerList(paletteLayer)
 
       // The drag cursor is drawn in screen space, so it size is fixed and not affected by zoom.
-      dragCursor = await layerManager.createImageLayer({
+      dragCursor = await topScreenLayerManager.createImageLayer({
         width: 32,
         height: 32,
         src: dragCursorImg,
@@ -236,10 +249,10 @@ const App = defineComponent({
       brushCursor = new BrushCursor()
       brushCursor.radius = brushSizeRef.value / 2
       brushCursor.visible = false
-      layerManager.addLayer(brushCursor)
+      topScreenLayerManager.addLayer(brushCursor)
 
       // Create a color picker cursor layer.
-      colorPickerCursor = await layerManager.createImageLayer({
+      colorPickerCursor = await BitmapLayer.fromImage({
         width: 64,
         height: 64,
         src: colorpickerCursorImg,
@@ -247,9 +260,9 @@ const App = defineComponent({
         anchor: 'center'
       })
       colorPickerCursor.visible = false
-      layerManager.addLayer(colorPickerCursor)
+      topScreenLayerManager.addLayer(colorPickerCursor)
 
-      colorPreviewLayer = layerManager.createCanvasLayer({
+      colorPreviewLayer = contentLayerManager.createCanvasLayer({
         width: 35,
         height: 20,
         space: 'screen',
@@ -272,7 +285,7 @@ const App = defineComponent({
       const shouldHandleDraw = view && !isInTempMoveMode && !isInColorPickerModeRef.value
       if (shouldHandleDraw) {
         const { wx, wy } = view!.toWorld(event.offsetX, event.offsetY)
-        const currentLayer = layerManager.getLayer(selectedLayerIdRef.value)
+        const currentLayer = contentLayerManager.getLayer(selectedLayerIdRef.value)
         if (
           currentLayer instanceof CanvasLayer &&
           currentLayer.visible &&
@@ -535,7 +548,7 @@ const App = defineComponent({
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('blur', onWindowBlur)
       layerListRef.value = []
-      layerManager.destroy()
+      contentLayerManager.destroy()
       view?.destroy()
       view = null
     })

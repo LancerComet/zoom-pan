@@ -1,5 +1,4 @@
-import { ZoomPan2D } from '../core/zoom-pan-2d.ts'
-import { LayerBase } from '../layer/layer.base.ts'
+import { ZoomPan2D, LayerBase } from '../../../lib'
 
 class BrushCursor extends LayerBase {
   /**
@@ -51,12 +50,10 @@ class BrushCursor extends LayerBase {
     return false
   }
 
-  render (view: ZoomPan2D) {
+  render (context: CanvasRenderingContext2D, view: ZoomPan2D) {
     if (!this.visible) {
       return
     }
-
-    const context = view.context
 
     // 1) 把屏幕坐标转换成世界坐标（关键！）
     const { wx, wy } = view.toWorld(this.screenX, this.screenY)

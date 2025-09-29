@@ -23,6 +23,12 @@ class ZoomPan2D {
   readonly canvas: HTMLCanvasElement
   readonly context: CanvasRenderingContext2D
 
+  readonly contentCanvas: HTMLCanvasElement
+  readonly contentContext: CanvasRenderingContext2D
+
+  readonly topScreenCanvas: HTMLCanvasElement
+  readonly topScreenContext: CanvasRenderingContext2D
+
   private readonly _render: RenderFn
   private readonly _options: Required<ZoomPanOptions>
   private readonly _resizeObserver?: ResizeObserver
@@ -92,6 +98,13 @@ class ZoomPan2D {
   // ---------- Internals ----------
   private _activePointerId: number | null = null
 
+  private _ensureOffscreenSizeLike (target: HTMLCanvasElement, src: HTMLCanvasElement) {
+    if (target.width !== src.width || target.height !== src.height) {
+      target.width = src.width
+      target.height = src.height
+    }
+  }
+
   private _loop () {
     const now = performance.now()
     const dt = Math.max(1, now - this._lastFrameTs)
@@ -152,47 +165,67 @@ class ZoomPan2D {
     this._clampPanForDocMode(zNow)
 
     // --- D) 一帧只写一次矩阵并渲染 ---
-    this.context.setTransform(1, 0, 0, 1, 0, 0)
+    const contentCanvas = this.contentCanvas
+    const contentContext = this.contentContext
+
+    const topScreenCanvas = this.topScreenCanvas
+    const topScreenContext = this.topScreenContext
+
+    const finalCanvas = this.canvas
+    const finalContext = this.context
+
+    this._ensureOffscreenSizeLike(contentCanvas, finalCanvas)
+    this._ensureOffscreenSizeLike(topScreenCanvas, finalCanvas)
+
+    contentContext.setTransform(1, 0, 0, 1, 0, 0)
+    topScreenContext.setTransform(1, 0, 0, 1, 0, 0)
 
     // treat null / undefined / '' / 'transparent' as transparent
     const bg = this._options.background
     const isOpaqueBg = typeof bg === 'string' && bg.trim() !== '' && bg.toLowerCase() !== 'transparent'
 
     if (isOpaqueBg) {
-      this.context.fillStyle = bg!
-      this.context.fillRect(0, 0, this.canvas.width, this.canvas.height)
+      contentContext.fillStyle = bg!
+      contentContext.fillRect(0, 0, contentCanvas.width, contentCanvas.height)
     } else {
-      this.context.clearRect(0, 0, this.canvas.width, this.canvas.height)
+      contentContext.clearRect(0, 0, contentCanvas.width, contentCanvas.height)
     }
+    topScreenContext.clearRect(0, 0, topScreenCanvas.width, topScreenCanvas.height)
 
-    this.context.setTransform(this._dpr * zNow, 0, 0, this._dpr * zNow, this._dpr * this._tx, this._dpr * this._ty)
+    contentContext.setTransform(this._dpr * zNow, 0, 0, this._dpr * zNow, this._dpr * this._tx, this._dpr * this._ty)
+    topScreenContext.setTransform(this._dpr * zNow, 0, 0, this._dpr * zNow, this._dpr * this._tx, this._dpr * this._ty)
+    // topScreenContext.setTransform(this._dpr, 0, 0, this._dpr, 0, 0)
 
     if (this._docEnabled) {
       // optional background around doc could be drawn here if you like
       // world clipping to document
-      this.context.save()
-      this.context.beginPath()
-      this.context.rect(this._docX, this._docY, this._docW, this._docH)
-      this.context.clip()
+      contentContext.save()
+      contentContext.beginPath()
+      contentContext.rect(this._docX, this._docY, this._docW, this._docH)
+      contentContext.clip()
 
       // user world rendering
       this._render(this)
 
-      this.context.restore()
+      contentContext.restore()
 
       // 1px screen border around the document
       if (this._options.drawDocBorder) {
         const { zoom } = this.getTransform()
-        this.context.save()
-        this.context.lineWidth = 1 / zoom
-        this.context.strokeStyle = '#cfcfcf'
-        this.context.strokeRect(this._docX, this._docY, this._docW, this._docH)
-        this.context.restore()
+        contentContext.save()
+        contentContext.lineWidth = 1 / zoom
+        contentContext.strokeStyle = '#cfcfcf'
+        contentContext.strokeRect(this._docX, this._docY, this._docW, this._docH)
+        contentContext.restore()
       }
     } else {
       // no document rect: render directly
       this._render(this)
     }
+
+    finalContext.clearRect(0, 0, finalCanvas.width, finalCanvas.height)
+    finalContext.drawImage(contentCanvas, 0, 0)
+    finalContext.drawImage(topScreenCanvas, 0, 0)
 
     this._raf = requestAnimationFrame(() => this._loop())
   }
@@ -333,7 +366,8 @@ class ZoomPan2D {
     }
 
     // getImageData 不受当前 transform 影响，直接是像素空间
-    const data = this.context.getImageData(x, y, 1, 1).data
+    const context = this.contentContext // Get color from content context.
+    const data = context.getImageData(x, y, 1, 1).data
     const r = data[0]
     const g = data[1]
     const b = data[2]
@@ -609,6 +643,9 @@ class ZoomPan2D {
     this.canvas.height = Math.round(h * this._dpr)
     this.canvas.style.width = `${w}px`
     this.canvas.style.height = `${h}px`
+
+    this._ensureOffscreenSizeLike(this.contentCanvas, this.canvas)
+    this._ensureOffscreenSizeLike(this.topScreenCanvas, this.canvas)
   }
 
   /** Destroy and cleanup */
@@ -639,6 +676,22 @@ class ZoomPan2D {
     this.canvas = canvas
     this.context = context
     this._render = render
+
+    this.contentCanvas = document.createElement('canvas')
+    this.contentCanvas.width = canvas.width
+    this.contentCanvas.height = canvas.height
+    this.contentContext = this.contentCanvas.getContext('2d', {
+      willReadFrequently: true,
+      alpha: true
+    })!
+
+    this.topScreenCanvas = document.createElement('canvas')
+    this.topScreenCanvas.width = canvas.width
+    this.topScreenCanvas.height = canvas.height
+    this.topScreenContext = this.topScreenCanvas.getContext('2d', {
+      willReadFrequently: true,
+      alpha: true
+    })!
 
     // defaults
     this._options = {

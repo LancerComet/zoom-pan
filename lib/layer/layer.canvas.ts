@@ -1,4 +1,3 @@
-import type { ZoomPan2D } from '../core/zoom-pan-2d.ts'
 import { AnchorType, SpaceType } from '../types'
 import { LayerBase } from './layer.base.ts'
 
@@ -150,12 +149,11 @@ class CanvasLayer extends LayerBase {
   /**
    * Render the layer onto the given ZoomPan2D context.
    */
-  render (view: ZoomPan2D) {
+  render (ctx: CanvasRenderingContext2D) {
     if (!this.visible) {
       return
     }
 
-    const ctx = view.context
     ctx.save()
     ctx.globalAlpha = this.opacity
     ctx.globalCompositeOperation = this.blend
