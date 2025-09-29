@@ -380,7 +380,7 @@ const App = defineComponent({
       const clientY = event.clientY
 
       const isZoomTool = toolRef.value === 'zoom'
-      if (isZoomTool && isPointerDown && !isInTempMoveModeRef.value) {
+      if (isZoomTool && isPointerDown && !isInTempMoveModeRef.value && !isInColorPickerModeRef.value) {
         const dx = event.offsetX - zoomStartPoint.x
         const targetZoom = zoomStartZoom + dx * 0.01
         view?.zoomToAtScreen(zoomStartPoint.x, zoomStartPoint.y, targetZoom)
@@ -488,6 +488,7 @@ const App = defineComponent({
         colorPickerCursor.visible = true
       }
       setBrushVisibility(false)
+      view?.setPanEnabled(false)
       isInColorPickerModeRef.value = true
     }
 
@@ -495,11 +496,11 @@ const App = defineComponent({
       if (colorPickerCursor) {
         colorPickerCursor.visible = false
       }
-      if (brushCursor && isPaintToolSelected.value) {
-        setBrushVisibility(true)
-      }
       if (colorPreviewLayer) {
         colorPreviewLayer.visible = false
+      }
+      if (isPaintToolSelected.value) {
+        setBrushVisibility(true)
       }
       isInColorPickerModeRef.value = false
     }
