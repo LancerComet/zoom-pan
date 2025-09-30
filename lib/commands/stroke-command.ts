@@ -4,7 +4,7 @@ import type { ICommand, IStrokeData } from './type'
 
 interface StrokeCommandOptions {
   snapshot?: ImageData | null
-  appliedFromLive?: boolean
+  alreadyApplied?: boolean
 }
 
 interface BoundingBox {
@@ -17,9 +17,8 @@ interface BoundingBox {
 class StrokeCommand extends BaseCommand {
   private readonly layer: CanvasLayer
   private strokeData: IStrokeData
-  private previousImageData: ImageData | null
-  private boundingBox: BoundingBox | null
-  private hasLiveApplied: boolean
+  private previousImageData: ImageData | null = null
+  private boundingBox: { x: number, y: number, width: number, height: number } | null = null
   private isExecuted = false
 
   private calculateBoundingBox (): BoundingBox | null {
@@ -159,6 +158,10 @@ class StrokeCommand extends BaseCommand {
     context.globalCompositeOperation = 'source-over'
   }
 
+  /**
+   * 执行命令：重新绘制笔画
+   * 用于重做操作
+   */
   execute (): void {
     if (this.isExecuted) {
       return
@@ -171,12 +174,7 @@ class StrokeCommand extends BaseCommand {
       }
     }
 
-    if (this.hasLiveApplied) {
-      this.hasLiveApplied = false
-    } else {
-      this.performStroke()
-    }
-
+    this.performStroke()
     this.isExecuted = true
   }
 
@@ -200,15 +198,19 @@ class StrokeCommand extends BaseCommand {
     return this
   }
 
-  constructor (layer: CanvasLayer, strokeData: IStrokeData, options?: StrokeCommandOptions) {
+  constructor (
+    layer: CanvasLayer,
+    strokeData: IStrokeData,
+    options: StrokeCommandOptions = {}
+  ) {
     super('stroke')
     this.layer = layer
     this.strokeData = {
       ...strokeData,
       points: strokeData.points.slice()
     }
-    this.previousImageData = options?.snapshot ?? null
-    this.hasLiveApplied = options?.appliedFromLive ?? false
+    this.previousImageData = options.snapshot ?? null
+    this.isExecuted = options.alreadyApplied ?? false
     this.boundingBox = this.calculateBoundingBox()
 
     if (this.previousImageData && this.boundingBox) {

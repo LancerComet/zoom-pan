@@ -15,6 +15,7 @@
 
 import { computed, createApp, defineComponent, nextTick, onBeforeUnmount, onMounted, ref, Suspense, withModifiers } from 'vue'
 import { BitmapLayer, CanvasLayer, ContentLayerManager, PanClampMode, ViewManager, HistoryManager } from '../../lib'
+import { ICommand } from '../../lib/commands/type.ts'
 import { TopScreenLayerManager } from '../../lib/layer/layer-manager.top-screen.ts'
 import colorpickerCursorImg from './assets/cursor-color-picker.png'
 import panCursorImg from './assets/cursor-pan.png'
@@ -79,7 +80,16 @@ const App = defineComponent({
     const topScreenLayerManager = new TopScreenLayerManager()
 
     // History manager for undo/redo functionality
-    const historyManager = new HistoryManager(50)
+    // I create two refs to hold the undo and redo stacks to make them reactive,
+    // and pass them to the HistoryManager instance.
+    const undoSlackRef = ref<ICommand[]>([])
+    const redoSlackRef = ref<ICommand[]>([])
+
+    const historyManager = new HistoryManager({
+      maxHistorySize: 50,
+      undoStack: undoSlackRef.value,
+      redoStack: redoSlackRef.value
+    })
 
     // This cursor layer acts as a pan cursor in the stage.
     // When people use the pen / eraser tool while holding the space key, it appears.
@@ -762,8 +772,8 @@ const App = defineComponent({
 
     const UndoRedoButtons = () => (
       <div class={style.undoRedoContainer}>
-        <button onClick={handleUndo}>Undo</button>
-        <button onClick={handleRedo}>Redo</button>
+        <button onClick={handleUndo} disabled={undoSlackRef.value.length < 1}>Undo</button>
+        <button onClick={handleRedo} disabled={redoSlackRef.value.length < 1}>Redo</button>
       </div>
     )
 

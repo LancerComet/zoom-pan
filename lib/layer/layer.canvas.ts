@@ -139,7 +139,8 @@ class CanvasLayer extends LayerBase {
 
     this._drawing = false
 
-    // 如果有历史管理器且有笔画点，创建并执行笔画命令
+    // 如果有历史管理器且有笔画点，创建命令并添加到历史记录
+    // 注意：使用 addCommand 而不是 executeCommand，因为笔画已经在实时绘制阶段应用
     if (this._historyManager && this._currentStrokePoints.length > 0) {
       const command = new StrokeCommand(this, {
         points: this._currentStrokePoints.slice(),
@@ -147,11 +148,11 @@ class CanvasLayer extends LayerBase {
         size: this._currentStrokeSize,
         mode: this._currentStrokeMode
       }, {
-        snapshot: this._strokeStartSnapshot,
-        appliedFromLive: true
+        snapshot: this._strokeStartSnapshot ?? undefined,
+        alreadyApplied: true
       })
 
-      this._historyManager.executeCommand(command)
+      this._historyManager.addCommand(command)
     }
 
     // 清空笔画点缓存
