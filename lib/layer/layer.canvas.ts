@@ -23,6 +23,11 @@ interface ICreateCanvasLayerOption {
   redraw?: (context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => void
 }
 
+interface ILayerResizeConfig {
+  width: number
+  height: number
+}
+
 /**
  * CanvasLayer is used to create a layer with an offscreen canvas in either world or screen space.
  * You can draw anything you want on the offscreen canvas, and it will be rendered as a layer.
@@ -297,6 +302,61 @@ class CanvasLayer extends LayerBase {
     this._strokeStartSnapshot = null
   }
 
+  cropTo (config: ILayerResizeConfig): void {
+    const width = Math.max(1, Math.floor(config.width))
+    const height = Math.max(1, Math.floor(config.height))
+    if (width === this.canvas.width && height === this.canvas.height) {
+      return
+    }
+
+    const snapshot = this._cloneCanvas()
+    const copyWidth = Math.min(snapshot.width, width)
+    const copyHeight = Math.min(snapshot.height, height)
+
+    this._setCanvasSize(width, height)
+    if (copyWidth > 0 && copyHeight > 0) {
+      this.context.drawImage(snapshot, 0, 0, copyWidth, copyHeight, 0, 0, copyWidth, copyHeight)
+    }
+  }
+
+  resizeTo (config: ILayerResizeConfig): void {
+    const width = Math.max(1, Math.floor(config.width))
+    const height = Math.max(1, Math.floor(config.height))
+    if (width === this.canvas.width && height === this.canvas.height) {
+      return
+    }
+
+    const snapshot = this._cloneCanvas()
+
+    this._setCanvasSize(width, height)
+    if (snapshot.width > 0 && snapshot.height > 0) {
+      this.context.drawImage(snapshot, 0, 0, snapshot.width, snapshot.height, 0, 0, width, height)
+    }
+  }
+
+  private _cloneCanvas (): HTMLCanvasElement {
+    const offscreen = document.createElement('canvas')
+    offscreen.width = this.canvas.width
+    offscreen.height = this.canvas.height
+    if (offscreen.width === 0 || offscreen.height === 0) {
+      return offscreen
+    }
+
+    const ctx = offscreen.getContext('2d')
+    if (!ctx) {
+      throw new Error('Offscreen 2D context unavailable')
+    }
+    ctx.drawImage(this.canvas, 0, 0)
+    return offscreen
+  }
+
+  private _setCanvasSize (width: number, height: number): void {
+    this.canvas.width = width
+    this.canvas.height = height
+    this.context.setTransform(1, 0, 0, 1, 0, 0)
+    this.context.clearRect(0, 0, width, height)
+  }
+
   constructor (options: ICreateCanvasLayerOption) {
     super(
       options.name || '',
@@ -335,5 +395,6 @@ export {
 }
 
 export type {
-  ICreateCanvasLayerOption
+  ICreateCanvasLayerOption,
+  ILayerResizeConfig
 }
