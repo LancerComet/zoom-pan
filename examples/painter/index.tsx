@@ -6,16 +6,16 @@
  * E: Eraser
  * H: Pan
  * Z: Zoom
+ * Ctrl+Z: Undo
+ * Ctrl+Y or Ctrl+Shift+Z: Redo
  * Alt: Color picker
  * Hold Space to move canvas while using Brush or Eraser.
  * Just like Photoshop.
  */
 
-import {
-  computed, createApp,
-  defineAsyncComponent, defineComponent, nextTick, onBeforeUnmount, onMounted, ref, Suspense, withModifiers
-} from 'vue'
-import { BitmapLayer, CanvasLayer, ContentLayerManager, PanClampMode, ViewManager } from '../../lib'
+import { computed, createApp, defineComponent, nextTick, onBeforeUnmount, onMounted, ref, Suspense, withModifiers } from 'vue'
+import { BitmapLayer, CanvasLayer, ContentLayerManager, PanClampMode, ViewManager, HistoryManager } from '../../lib'
+import { ICommand } from '../../lib/commands/type.ts'
 import { TopScreenLayerManager } from '../../lib/layer/layer-manager.top-screen.ts'
 import colorpickerCursorImg from './assets/cursor-color-picker.png'
 import panCursorImg from './assets/cursor-pan.png'
@@ -64,6 +64,7 @@ const App = defineComponent({
       contentLayerManager.destroy()
       viewManager?.destroy()
       viewManager = null
+      historyManager.clear()
     })
 
     // The layer that is currently being drawn (stroked) on.
@@ -77,6 +78,18 @@ const App = defineComponent({
     // - Top screen layer manager: Put your non bitmap content here, such as UI elements.
     const contentLayerManager = new ContentLayerManager()
     const topScreenLayerManager = new TopScreenLayerManager()
+
+    // History manager for undo/redo functionality
+    // I create two refs to hold the undo and redo stacks to make them reactive,
+    // and pass them to the HistoryManager instance.
+    const undoSlackRef = ref<ICommand[]>([])
+    const redoSlackRef = ref<ICommand[]>([])
+
+    const historyManager = new HistoryManager({
+      maxHistorySize: 50,
+      undoStack: undoSlackRef.value,
+      redoStack: redoSlackRef.value
+    })
 
     // This cursor layer acts as a pan cursor in the stage.
     // When people use the pen / eraser tool while holding the space key, it appears.
@@ -154,6 +167,9 @@ const App = defineComponent({
         width: DOCUMENT_WIDTH,
         height: DOCUMENT_HEIGHT
       })
+
+      // 设置历史管理器，用于撤销重做功能
+      layer.setHistoryManager(historyManager)
 
       {
         const allLayer = contentLayerManager.getAllLayers()
@@ -261,11 +277,12 @@ const App = defineComponent({
     const initPresetLayers = async () => {
       // Create a layer that shows a checkerboard pattern to indicate transparency.
       const transparentImg = await createPatternImage(DOCUMENT_WIDTH, DOCUMENT_HEIGHT, transparentLayerImg)
-      const l = contentLayerManager.createCanvasLayer({
+      const transparentLayer = contentLayerManager.createCanvasLayer({
         width: DOCUMENT_WIDTH,
         height: DOCUMENT_HEIGHT
       })
-      l.drawImage(transparentImg, 0, 0)
+      transparentLayer.drawImage(transparentImg, 0, 0)
+      transparentLayer.setHistoryManager(historyManager)
 
       // The layer that is used as the background of the document.
       const backgroundLayer = contentLayerManager.createCanvasLayer({
@@ -277,6 +294,7 @@ const App = defineComponent({
           context.fillRect(0, 0, canvas.width, canvas.height)
         }
       })
+      backgroundLayer.setHistoryManager(historyManager)
       addToLayerList(backgroundLayer)
 
       // Insert an image layer.
@@ -291,6 +309,7 @@ const App = defineComponent({
         (DOCUMENT_WIDTH - lineArtImage.naturalWidth) / 2,
         (DOCUMENT_HEIGHT - lineArtImage.naturalHeight) / 2
       )
+      lineArtLayer.setHistoryManager(historyManager)
       addToLayerList(lineArtLayer)
       selectedLayerIdRef.value = lineArtLayer.id
 
@@ -301,6 +320,7 @@ const App = defineComponent({
         height: DOCUMENT_HEIGHT
       })
       paletteLayer.drawImage(paletteImg, 50, 50)
+      paletteLayer.setHistoryManager(historyManager)
       addToLayerList(paletteLayer)
     }
 
@@ -335,6 +355,10 @@ const App = defineComponent({
           currentLayer.hitTest(wx, wy)
         ) {
           currentStrokeLayer = currentLayer
+          // 确保当前绘画图层有历史管理器
+          if (!currentLayer.getHistoryManager()) {
+            currentLayer.setHistoryManager(historyManager)
+          }
           currentLayer.beginStroke(wx, wy)
         }
       }
@@ -426,10 +450,9 @@ const App = defineComponent({
       if (viewManager) {
         const { wx, wy } = viewManager.toWorld(event.offsetX, event.offsetY)
 
-        const shouldHandleDraw = toolRef.value === 'brush' &&
+        const shouldHandleDraw = isPaintToolSelected.value &&
           !isInColorPickerModeRef.value &&
-          currentStrokeLayer &&
-          currentStrokeLayer.hitTest(wx, wy)
+          currentStrokeLayer
 
         if (shouldHandleDraw) {
           currentStrokeLayer!.endStroke()
@@ -500,11 +523,30 @@ const App = defineComponent({
       }
     }
 
+    const handleUndo = () => {
+      if (currentStrokeLayer) {
+        currentStrokeLayer.undo()
+      }
+    }
+
+    const handleRedo = () => {
+      if (currentStrokeLayer) {
+        currentStrokeLayer.redo()
+      }
+    }
+
     const onKeyDown = (event: KeyboardEvent) => {
       // Hold space to move the canvas while using the pen or eraser tool.
       const isSpace = event.code === 'Space' || event.key === ' '
       if (isSpace) {
         enterTempMoveMode()
+        return
+      }
+
+      const isAltHold = event.altKey || event.metaKey
+      if (isAltHold) {
+        event.preventDefault()
+        enterColorPickerMode()
         return
       }
 
@@ -518,14 +560,7 @@ const App = defineComponent({
         case 's': {
           const brushSize = currentBrushSize.value - 10
           setBrushSize(brushSize)
-          return
         }
-      }
-
-      const isAltHold = event.altKey || event.metaKey
-      if (isAltHold) {
-        event.preventDefault()
-        enterColorPickerMode()
       }
     }
 
@@ -537,6 +572,20 @@ const App = defineComponent({
         if (is0) {
           event.preventDefault()
           viewManager?.zoomDocumentToFit('contain')
+          return
+        }
+
+        const isZ = event.key.toLowerCase() === 'z'
+        if (isZ) {
+          event.preventDefault()
+          handleUndo()
+          return
+        }
+
+        const isY = event.key.toLowerCase() === 'y'
+        if (isY) {
+          event.preventDefault()
+          handleRedo()
           return
         }
       }
@@ -582,7 +631,7 @@ const App = defineComponent({
     window.addEventListener('blur', onWindowBlur)
 
     // This is a hacky way to append the canvas of each layer into the layer list item.
-    const createSrc = (id: string, canvas: HTMLCanvasElement) => {
+    const appendPreviewCanvas = (id: string, canvas: HTMLCanvasElement) => {
       nextTick(() => {
         const div = document.getElementById(`preview_${id}`)
         if (div) {
@@ -615,7 +664,7 @@ const App = defineComponent({
             <div
               id={'preview_' + item.id}
               class={style.previewImg}
-            >{ createSrc(item.id, item.canvas) }</div>
+            >{ appendPreviewCanvas(item.id, item.canvas) }</div>
 
             <div class={style.layerInfo}>
               <span>{ item.name }</span>
@@ -721,8 +770,16 @@ const App = defineComponent({
       </label>
     )
 
+    const UndoRedoButtons = () => (
+      <div class={style.undoRedoContainer}>
+        <button onClick={handleUndo} disabled={undoSlackRef.value.length < 1}>Undo</button>
+        <button onClick={handleRedo} disabled={redoSlackRef.value.length < 1}>Redo</button>
+      </div>
+    )
+
     const Toolbar = () => (
       <div class={style.toolbar}>
+        <UndoRedoButtons />
         <PanModeSelector />
         <ColorPicker />
         <ToolButtons />

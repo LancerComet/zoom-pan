@@ -1,3 +1,6 @@
+import { HistoryManager } from '../commands/history-manager'
+import { StrokeCommand } from '../commands/stroke-command'
+import { IStrokePoint } from '../commands/type'
 import { AnchorType, SpaceType } from '../types'
 import { LayerBase } from './layer.base.ts'
 
@@ -35,6 +38,15 @@ class CanvasLayer extends LayerBase {
   rotation: number = 0
   anchor: AnchorType = 'topLeft'
 
+  // Undo/Redo system
+  // =================
+  private _historyManager?: HistoryManager
+  private _currentStrokePoints: IStrokePoint[] = []
+  private _currentStrokeColor: string = '#000000'
+  private _currentStrokeSize: number = 10
+  private _currentStrokeMode: 'brush' | 'eraser' = 'brush'
+  private _strokeStartSnapshot: ImageData | null = null
+
   // Drawing.
   // =================
   private _drawing = false
@@ -46,6 +58,28 @@ class CanvasLayer extends LayerBase {
     this._lastX = lx
     this._lastY = ly
     this._drawing = true
+
+    if (this._historyManager) {
+      try {
+        this._strokeStartSnapshot = this.context.getImageData(
+          0,
+          0,
+          this.canvas.width,
+          this.canvas.height
+        )
+      } catch {
+        this._strokeStartSnapshot = null
+      }
+    } else {
+      this._strokeStartSnapshot = null
+    }
+
+    // 开始新笔画，清空之前的笔画点
+    this._currentStrokePoints = [{
+      x: lx,
+      y: ly,
+      pressure: 1 // 默认压力值，可以通过参数传入
+    }]
   }
 
   stroke (
@@ -60,6 +94,22 @@ class CanvasLayer extends LayerBase {
 
     const { lx, ly } = this.toLocalPoint(wx, wy)
 
+    if (this._currentStrokePoints.length === 1) {
+      this._currentStrokePoints[0].pressure = pressure
+    }
+
+    // 记录笔画点（用于撤销重做）
+    this._currentStrokePoints.push({
+      x: lx,
+      y: ly,
+      pressure
+    })
+
+    // 更新当前笔画属性
+    this._currentStrokeColor = color
+    this._currentStrokeSize = size
+    this._currentStrokeMode = mode
+
     this.context.beginPath()
     this.context.moveTo(this._lastX, this._lastY)
     this.context.lineTo(lx, ly)
@@ -72,7 +122,6 @@ class CanvasLayer extends LayerBase {
       this.context.strokeStyle = color
     }
 
-    this.context.strokeStyle = color
     this.context.lineWidth = size * pressure
     this.context.lineCap = 'round'
     this.context.lineJoin = 'round'
@@ -84,7 +133,31 @@ class CanvasLayer extends LayerBase {
   }
 
   endStroke () {
+    if (!this._drawing) {
+      return
+    }
+
     this._drawing = false
+
+    // 如果有历史管理器且有笔画点，创建命令并添加到历史记录
+    // 注意：使用 addCommand 而不是 executeCommand，因为笔画已经在实时绘制阶段应用
+    if (this._historyManager && this._currentStrokePoints.length > 0) {
+      const command = new StrokeCommand(this, {
+        points: this._currentStrokePoints.slice(),
+        color: this._currentStrokeColor,
+        size: this._currentStrokeSize,
+        mode: this._currentStrokeMode
+      }, {
+        snapshot: this._strokeStartSnapshot ?? undefined,
+        alreadyApplied: true
+      })
+
+      this._historyManager.addCommand(command)
+    }
+
+    // 清空笔画点缓存
+    this._currentStrokePoints = []
+    this._strokeStartSnapshot = null
   }
 
   /**
@@ -168,8 +241,60 @@ class CanvasLayer extends LayerBase {
     ctx.restore()
   }
 
-  destroy () {
-    // TODO: Nothing to do?
+  /**
+   * 设置历史管理器，用于撤销重做功能
+   */
+  setHistoryManager (historyManager: HistoryManager): void {
+    this._historyManager = historyManager
+  }
+
+  /**
+   * 获取历史管理器
+   */
+  getHistoryManager (): HistoryManager | undefined {
+    return this._historyManager
+  }
+
+  /**
+   * 撤销操作
+   */
+  undo (): boolean {
+    if (this._historyManager?.canUndo()) {
+      this._historyManager.undo()
+      return true
+    }
+    return false
+  }
+
+  /**
+   * 重做操作
+   */
+  redo (): boolean {
+    if (this._historyManager?.canRedo()) {
+      this._historyManager.redo()
+      return true
+    }
+    return false
+  }
+
+  /**
+   * 检查是否可以撤销
+   */
+  canUndo (): boolean {
+    return this._historyManager?.canUndo() ?? false
+  }
+
+  /**
+   * 检查是否可以重做
+   */
+  canRedo (): boolean {
+    return this._historyManager?.canRedo() ?? false
+  }
+
+  destroy (): void {
+    this._currentStrokePoints = []
+    this._historyManager = undefined
+    this._strokeStartSnapshot = null
   }
 
   constructor (options: ICreateCanvasLayerOption) {
@@ -182,7 +307,9 @@ class CanvasLayer extends LayerBase {
     this.canvas.width = options.width
     this.canvas.height = options.height
 
-    const context = this.canvas.getContext('2d')
+    const context = this.canvas.getContext('2d', {
+      willReadFrequently: true
+    })
     if (!context) {
       throw new Error('Offscreen 2D context unavailable')
     }
