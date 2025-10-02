@@ -32,14 +32,14 @@ class StrokeCommand extends BaseCommand {
 
     for (const point of points) {
       const pressure = point.pressure ?? 1
-      const radius = (size * pressure) / 2
+      const radius = Math.max((size * pressure) / 2, 1)
       minX = Math.min(minX, point.x - radius)
       minY = Math.min(minY, point.y - radius)
       maxX = Math.max(maxX, point.x + radius)
       maxY = Math.max(maxY, point.y + radius)
     }
 
-    const padding = 2
+    const padding = Math.max(2, Math.ceil(size * 0.1))
     const { canvas } = this.layer
     const x = Math.max(0, Math.floor(minX - padding))
     const y = Math.max(0, Math.floor(minY - padding))
@@ -56,33 +56,6 @@ class StrokeCommand extends BaseCommand {
     return { x, y, width, height }
   }
 
-  private fitSnapshotToBoundingBox (): void {
-    if (!this.previousImageData || !this.boundingBox) {
-      return
-    }
-
-    const { width, height } = this.boundingBox
-    if (this.previousImageData.width === width && this.previousImageData.height === height) {
-      return
-    }
-
-    const source = this.previousImageData
-    const cropped = new ImageData(width, height)
-    const srcData = source.data
-    const dstData = cropped.data
-    const sourceWidth = source.width
-    const rowStride = width * 4
-    const { x, y } = this.boundingBox
-
-    for (let row = 0; row < height; row++) {
-      const srcOffset = ((y + row) * sourceWidth + x) * 4
-      const dstOffset = row * rowStride
-      dstData.set(srcData.subarray(srcOffset, srcOffset + rowStride), dstOffset)
-    }
-
-    this.previousImageData = cropped
-  }
-
   private captureCurrentState (): ImageData | null {
     try {
       const { context, canvas } = this.layer
@@ -96,6 +69,39 @@ class StrokeCommand extends BaseCommand {
       return context.getImageData(0, 0, canvas.width, canvas.height)
     } catch {
       return null
+    }
+  }
+
+  private extractSnapshotRegion (snapshot: ImageData | null): ImageData | null {
+    if (!snapshot) {
+      return null
+    }
+
+    if (!this.boundingBox) {
+      return snapshot
+    }
+
+    const { x, y, width, height } = this.boundingBox
+    if (width <= 0 || height <= 0) {
+      return snapshot
+    }
+
+    if (x === 0 && y === 0 && width === snapshot.width && height === snapshot.height) {
+      return snapshot
+    }
+
+    try {
+      const offscreen = document.createElement('canvas')
+      offscreen.width = snapshot.width
+      offscreen.height = snapshot.height
+      const ctx = offscreen.getContext('2d')
+      if (!ctx) {
+        return snapshot
+      }
+      ctx.putImageData(snapshot, 0, 0)
+      return ctx.getImageData(x, y, width, height)
+    } catch {
+      return snapshot
     }
   }
 
@@ -168,10 +174,8 @@ class StrokeCommand extends BaseCommand {
     }
 
     if (!this.previousImageData) {
-      this.previousImageData = this.captureCurrentState()
-      if (this.previousImageData && this.boundingBox) {
-        this.fitSnapshotToBoundingBox()
-      }
+      const snapshot = this.captureCurrentState()
+      this.previousImageData = this.extractSnapshotRegion(snapshot)
     }
 
     this.performStroke()
@@ -209,13 +213,10 @@ class StrokeCommand extends BaseCommand {
       ...strokeData,
       points: strokeData.points.slice()
     }
-    this.previousImageData = options.snapshot ?? null
+    this.previousImageData = null
     this.isExecuted = options.alreadyApplied ?? false
     this.boundingBox = this.calculateBoundingBox()
-
-    if (this.previousImageData && this.boundingBox) {
-      this.fitSnapshotToBoundingBox()
-    }
+    this.previousImageData = this.extractSnapshotRegion(options.snapshot ?? null)
   }
 }
 
