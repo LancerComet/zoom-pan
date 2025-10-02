@@ -261,6 +261,9 @@ const App = defineComponent({
         }
       )
 
+      viewManager.registerLayerManager(contentLayerManager)
+      viewManager.registerLayerManager(topScreenLayerManager)
+
       // Set initial document size and screen margins.
       viewManager.setDocumentRect(0, 0, DOCUMENT_WIDTH, DOCUMENT_HEIGHT)
       viewManager.setDocumentMargins({

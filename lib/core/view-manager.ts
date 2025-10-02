@@ -1,4 +1,11 @@
+import type { LayerManagerBase } from '../layer/layer-manager.base.ts'
+import type { ILayerResizeConfig } from '../layer/layer.canvas.ts'
 import { clamp } from '../utils'
+
+type ResizableLayer = {
+  cropTo: (config: ILayerResizeConfig) => void
+  resizeTo: (config: ILayerResizeConfig) => void
+}
 
 type RenderFn = (view: ViewManager) => void
 
@@ -34,6 +41,7 @@ class ViewManager {
   private readonly _render: RenderFn
   private readonly _options: Required<ViewManagerOption>
   private readonly _resizeObserver?: ResizeObserver
+  private _layerManagers: LayerManagerBase[] = []
 
   private _isResetting = false
 
@@ -482,6 +490,42 @@ class ViewManager {
     this._onWheel(e)
   }
 
+  private _doResize (mode: 'crop' | 'resize', config: ILayerResizeConfig) {
+    const width = Math.max(1, Math.floor(config.width))
+    const height = Math.max(1, Math.floor(config.height))
+    const normalized: ILayerResizeConfig = { width, height }
+
+    this._iterateWorldCanvas(layer => {
+      if (mode === 'crop') {
+        layer.cropTo(normalized)
+      } else {
+        layer.resizeTo(normalized)
+      }
+    })
+
+    this._docW = width
+    this._docH = height
+    if (this._docEnabled) {
+      this._clampPanForDocMode(Math.exp(this._currentLogZ))
+    }
+  }
+
+  private _iterateWorldCanvas (visitor: (layer: ResizableLayer) => void) {
+    if (this._layerManagers.length === 0) {
+      return
+    }
+
+    for (const manager of this._layerManagers) {
+      const layers = manager.getAllLayers('world')
+      for (const layer of layers) {
+        const candidate = layer as unknown as Partial<ResizableLayer>
+        if (typeof candidate.cropTo === 'function' && typeof candidate.resizeTo === 'function') {
+          visitor(candidate as ResizableLayer)
+        }
+      }
+    }
+  }
+
   // -------- Dpr --------
   private _dpr = Math.max(1, window.devicePixelRatio || 1)
 
@@ -644,6 +688,22 @@ class ViewManager {
   }
 
   // ---------- Public API ----------
+  registerLayerManager (manager: LayerManagerBase) {
+    if (!manager) {
+      return
+    }
+    if (!this._layerManagers.includes(manager)) {
+      this._layerManagers.push(manager)
+    }
+  }
+
+  unregisterLayerManager (manager: LayerManagerBase) {
+    const index = this._layerManagers.indexOf(manager)
+    if (index >= 0) {
+      this._layerManagers.splice(index, 1)
+    }
+  }
+
   setDocumentRect (x: number, y: number, w: number, h: number) {
     this._docEnabled = true
     this._docX = x
@@ -661,6 +721,14 @@ class ViewManager {
     this._marginR = px.right ?? this._marginR
     this._marginT = px.top ?? this._marginT
     this._marginB = px.bottom ?? this._marginB
+  }
+
+  cropDocumentTo (config: ILayerResizeConfig) {
+    this._doResize('crop', config)
+  }
+
+  resizeDocumentTo (config: ILayerResizeConfig) {
+    this._doResize('resize', config)
   }
 
   zoomDocumentToFit (mode: 'contain'|'cover'|'fitWidth'|'fitHeight' = 'contain') {
@@ -809,6 +877,7 @@ class ViewManager {
     if (this._resizeObserver) {
       this._resizeObserver.disconnect()
     }
+    this._layerManagers = []
   }
 
   constructor (

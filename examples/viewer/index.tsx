@@ -32,6 +32,8 @@ const App = defineComponent({
           drawDocBorder: true
         }
       )
+
+      view.registerLayerManager(layerManager)
     }
 
     const initPresetLayers = async () => {
